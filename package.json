@@ -1,0 +1,12 @@
+{
+  "name": "british-auction-rfq-system",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Full-stack British Auction RFQ system using FastAPI, PostgreSQL-ready persistence, and React.",
+  "scripts": {
+    "backend": "cd backend && uvicorn app.main:app --reload",
+    "frontend": "npm --prefix frontend run dev",
+    "test": "python -m pytest backend/tests",
+    "build:frontend": "npm --prefix frontend run build"
+  }
+}
