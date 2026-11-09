@@ -12,6 +12,7 @@ class Settings:
         self.secret_key = os.getenv("SECRET_KEY", "dev-only-change-me-before-deploy")
         self.access_token_minutes = int(os.getenv("ACCESS_TOKEN_MINUTES", "480"))
         self.seed_demo_users = os.getenv("SEED_DEMO_USERS", "true").strip().lower() == "true"
+        self.demo_user_password = os.getenv("DEMO_USER_PASSWORD", "password123")
 
     @staticmethod
     def _parse_list(value: str) -> list[str]:

@@ -141,7 +141,7 @@ def seed_demo_users(db: Session) -> None:
         if existing:
             continue
 
-        password_hash, password_salt = hash_password(demo_user.password)
+        password_hash, password_salt = hash_password(settings.demo_user_password or demo_user.password)
         db.add(
             User(
                 email=demo_user.email,
