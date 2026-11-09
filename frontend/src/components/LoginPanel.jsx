@@ -4,6 +4,8 @@ const demoAccounts = [
   { label: "Supplier", email: "swift@carrier.test" }
 ];
 
+const reviewerPassword = import.meta.env.VITE_REVIEWER_PASSWORD || "password123";
+
 export function LoginPanel({ onLogin, isLoading }) {
   function handleSubmit(event) {
     event.preventDefault();
@@ -27,7 +29,7 @@ export function LoginPanel({ onLogin, isLoading }) {
           </label>
           <label>
             Password
-            <input name="password" type="password" defaultValue="password123" required />
+            <input name="password" type="password" defaultValue={reviewerPassword} required />
           </label>
           <button className="primary-button" type="submit" disabled={isLoading}>
             {isLoading ? "Signing in" : "Sign In"}
@@ -40,7 +42,7 @@ export function LoginPanel({ onLogin, isLoading }) {
               className="secondary-button"
               type="button"
               key={account.email}
-              onClick={() => onLogin(account.email, "password123")}
+              onClick={() => onLogin(account.email, reviewerPassword)}
               disabled={isLoading}
             >
               {account.label}: {account.email}
