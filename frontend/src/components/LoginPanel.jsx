@@ -9,8 +9,8 @@ const demoAccounts = [
 const reviewerPassword = import.meta.env.VITE_REVIEWER_PASSWORD || "password123";
 
 export function LoginPanel({ onLogin, isLoading }) {
-  const [email, setEmail] = useState("buyer@gocomet.test");
-  const [password, setPassword] = useState(reviewerPassword);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   function handleSubmit(event) {
     event.preventDefault();
