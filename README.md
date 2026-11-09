@@ -78,17 +78,24 @@ docs/                 HLD, architecture diagram, and schema design
 - Paginate RFQ listing responses
 - Store money using fixed-precision Decimal/Numeric values
 
-## Demo Accounts
+## Reviewer Demo Accounts
 
-The backend seeds these accounts by default for local review:
+The deployed demo uses these reviewer accounts:
 
 ```text
-buyer@gocomet.test / password123
-apex@carrier.test / password123
-swift@carrier.test / password123
+Buyer:
+buyer@gocomet.test / RfqReview9WJ4xM72QpZ6L
+
+Supplier:
+apex@carrier.test / RfqReview9WJ4xM72QpZ6L
+
+Supplier:
+swift@carrier.test / RfqReview9WJ4xM72QpZ6L
 ```
 
-Set `SEED_DEMO_USERS=false` and provide real users/secrets before production deployment.
+For local development, `backend/.env.example` uses `DEMO_USER_PASSWORD=password123`.
+
+Before any real production use, rotate the reviewer password, disable seeded users with `SEED_DEMO_USERS=false`, and create managed user accounts.
 
 ## Run Locally
 
