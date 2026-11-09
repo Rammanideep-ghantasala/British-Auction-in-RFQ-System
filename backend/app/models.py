@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -58,6 +58,8 @@ class RFQAuction(Base):
     close_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     forced_close_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     pickup_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     trigger_window_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     extension_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -122,6 +124,9 @@ class ActivityLog(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     auction_id: Mapped[str] = mapped_column(ForeignKey("rfq_auctions.id", ondelete="CASCADE"), index=True)
     actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    sequence_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    previous_entry_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     type: Mapped[str] = mapped_column(String(40), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -129,3 +134,13 @@ class ActivityLog(Base):
 
     auction: Mapped[RFQAuction] = relationship(back_populates="activity_logs")
     actor_user: Mapped[User | None] = relationship(back_populates="activity_logs")
+
+
+@event.listens_for(ActivityLog, "before_update")
+def prevent_activity_log_update(*_) -> None:
+    raise ValueError("Activity logs are append-only and cannot be updated.")
+
+
+@event.listens_for(ActivityLog, "before_delete")
+def prevent_activity_log_delete(*_) -> None:
+    raise ValueError("Activity logs are append-only and cannot be deleted.")

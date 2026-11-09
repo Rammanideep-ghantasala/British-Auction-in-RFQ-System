@@ -7,6 +7,7 @@ from app.api.auth import router as auth_router
 from app.api.rfqs import router as rfq_router
 from app.core.config import settings
 from app.db import init_db
+from app.middleware import RequestControlsMiddleware
 
 
 @asynccontextmanager
@@ -29,6 +30,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.add_middleware(RequestControlsMiddleware)
 
 @app.middleware("http")
 async def security_headers(request, call_next):

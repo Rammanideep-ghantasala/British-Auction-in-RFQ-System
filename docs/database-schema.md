@@ -35,6 +35,8 @@ erDiagram
         datetime close_at
         datetime forced_close_at
         datetime pickup_at
+        datetime closed_at
+        string close_reason
         integer trigger_window_minutes
         integer extension_minutes
         string trigger_type
@@ -65,6 +67,9 @@ erDiagram
         string id PK
         string auction_id FK
         string actor_user_id FK
+        integer sequence_number
+        string previous_entry_hash
+        string entry_hash
         string type
         text message
         datetime at
@@ -106,6 +111,8 @@ Stores RFQ auction configuration and current close state.
 | close_at | datetime | not null | Current bid close time |
 | forced_close_at | datetime | not null | Hard close limit |
 | pickup_at | datetime | not null | Pickup/service date |
+| closed_at | datetime | nullable, indexed | Persisted close transition time set by scheduled worker |
+| close_reason | string(40) | nullable | `scheduled-close` or `forced-close` |
 | trigger_window_minutes | integer | not null | X-minute trigger window |
 | extension_minutes | integer | not null | Y-minute extension duration |
 | trigger_type | string(40) | not null | `bid-received`, `any-rank-change`, or `l1-rank-change` |
@@ -160,7 +167,10 @@ Stores audit/activity events for RFQs.
 | id | string(36) | PK | UUID log ID |
 | auction_id | string(36) | FK rfq_auctions.id, indexed, not null | Auction ID |
 | actor_user_id | string(36) | FK users.id, indexed, nullable | Acting user |
-| type | string(40) | not null | Event type: `created`, `bid`, `extension` |
+| sequence_number | integer | indexed with auction_id, nullable for legacy rows | Per-auction append sequence |
+| previous_entry_hash | string(64) | nullable | Previous log hash in the auction audit chain |
+| entry_hash | string(64) | indexed, nullable for legacy rows | SHA-256 hash of the canonical log payload |
+| type | string(40) | not null | Event type: `created`, `bid`, `extension`, `closed` |
 | message | text | not null | Human-readable event message |
 | at | datetime | not null | Event time |
 | event_metadata | json | nullable | Structured metadata |
@@ -171,4 +181,5 @@ Stores audit/activity events for RFQs.
 - Supplier access is controlled through `auction_invitations`.
 - RFQ reference IDs are unique.
 - Each supplier can submit multiple bids, but only their latest valid bid is used for current ranking.
-- Activity logs preserve important auction events and extension reasons.
+- Activity logs are append-only in the application layer and chained with hashes so changed or reordered logs are detectable.
+- Scheduled close workers update `closed_at`/`close_reason` once and append a `closed` audit event.

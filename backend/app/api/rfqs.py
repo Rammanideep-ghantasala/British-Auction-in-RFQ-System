@@ -11,6 +11,7 @@ from app.db import get_db
 from app.models import ActivityLog, AuctionInvitation, Bid, RFQAuction, User, UserRole
 from app.schemas import AuctionCreate, AuctionDetail, AuctionPage, BidCreate
 from app.security import ensure_role, get_current_user
+from app.services.audit import append_activity_log
 from app.services import auction as auction_service
 
 router = APIRouter(prefix="/api/rfqs", tags=["rfqs"])
@@ -51,27 +52,6 @@ def _user_can_view_auction(user: User, auction: RFQAuction) -> bool:
 def _ensure_can_view(user: User, auction: RFQAuction) -> None:
     if not _user_can_view_auction(user, auction):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this RFQ.")
-
-
-def _add_log(
-    db: Session,
-    auction_id: str,
-    log_type: str,
-    message: str,
-    at: datetime | None = None,
-    event_metadata: dict | None = None,
-    actor_user_id: str | None = None,
-) -> None:
-    db.add(
-        ActivityLog(
-            auction_id=auction_id,
-            actor_user_id=actor_user_id,
-            type=log_type,
-            message=message,
-            at=at or _now(),
-            event_metadata=event_metadata,
-        )
-    )
 
 
 def _bid_read(bid: Bid) -> dict:
@@ -292,14 +272,14 @@ def create_auction(
         db.flush()
         for supplier in suppliers:
             db.add(AuctionInvitation(auction_id=auction.id, supplier_user_id=supplier.id))
-        _add_log(
+        append_activity_log(
             db,
-            auction.id,
-            "created",
-            f"RFQ {auction.reference_id} created.",
-            auction.created_at,
-            {"supplier_count": len(suppliers)},
-            current_user.id,
+            auction_id=auction.id,
+            log_type="created",
+            message=f"RFQ {auction.reference_id} created.",
+            at=auction.created_at,
+            event_metadata={"supplier_count": len(suppliers)},
+            actor_user_id=current_user.id,
         )
         db.commit()
     except IntegrityError:
@@ -367,32 +347,32 @@ def submit_bid(
         submitted_at=submitted_at,
     )
     db.add(bid)
-    _add_log(
+    append_activity_log(
         db,
-        auction.id,
-        "bid",
-        f"{candidate.carrier_name} submitted a quote totaling {auction_service.quote_total(candidate):.2f}.",
-        submitted_at,
-        {"carrier_name": candidate.carrier_name, "total": str(auction_service.quote_total(candidate))},
-        current_user.id,
+        auction_id=auction.id,
+        log_type="bid",
+        message=f"{candidate.carrier_name} submitted a quote totaling {auction_service.quote_total(candidate):.2f}.",
+        at=submitted_at,
+        event_metadata={"carrier_name": candidate.carrier_name, "total": str(auction_service.quote_total(candidate))},
+        actor_user_id=current_user.id,
     )
 
     if decision.extension and decision.extension.applied:
         auction.close_at = decision.extension.next_close_at
         capped_text = " The forced close cap was applied." if decision.extension.capped_by_forced_close else ""
-        _add_log(
+        append_activity_log(
             db,
-            auction.id,
-            "extension",
-            f"Bid close extended to {auction.close_at.isoformat()}. {decision.extension.reason}{capped_text}",
-            submitted_at,
-            {
+            auction_id=auction.id,
+            log_type="extension",
+            message=f"Bid close extended to {auction.close_at.isoformat()}. {decision.extension.reason}{capped_text}",
+            at=submitted_at,
+            event_metadata={
                 "previous_close_at": decision.extension.previous_close_at.isoformat(),
                 "next_close_at": decision.extension.next_close_at.isoformat(),
                 "trigger_type": auction.trigger_type,
                 "capped_by_forced_close": decision.extension.capped_by_forced_close,
             },
-            current_user.id,
+            actor_user_id=current_user.id,
         )
 
     try:

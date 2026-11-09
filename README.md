@@ -28,10 +28,12 @@ https://british-auction-rfq-system-production.up.railway.app/health
 
 ## Tech Stack
 
-- Backend: Python, FastAPI, SQLAlchemy 2, Pydantic
+- Backend: Python, FastAPI, SQLAlchemy 2, Pydantic, Alembic
 - Database: PostgreSQL in production, SQLite fallback for local development/tests
+- Async jobs: Celery with Redis broker for scheduled auction close transitions
 - Frontend: React + Vite
 - Testing: pytest for backend domain and API route behavior
+- CI/CD: GitHub Actions for migrations, backend tests, and frontend builds
 - Deployment target: Railway for backend/PostgreSQL, Vercel for frontend
 
 ## Project Structure
@@ -41,18 +43,19 @@ backend/
   app/
     api/              FastAPI route handlers
     core/             environment/config handling
-    services/         pure auction-domain rules
+    services/         auction, audit, and close-transition services
     db.py             SQLAlchemy session setup
     models.py         database models
     schemas.py        request/response schemas
-  migrations/         Alembic migration baseline
+  migrations/         Alembic migrations
   tests/              backend tests
 frontend/
   src/
     components/       React UI components
     api.js            API client
     formatters.js     display/date helpers
-docker-compose.yml    PostgreSQL + API local stack
+docker-compose.yml    PostgreSQL + Redis + API + Celery worker/beat local stack
+.github/workflows/    CI migration, test, and build checks
 docs/                 HLD, architecture diagram, and schema design
 ```
 
@@ -71,6 +74,9 @@ docs/                 HLD, architecture diagram, and schema design
 - Reject duplicate RFQ reference IDs
 - Reject supplier rebids that do not lower their current quote
 - Record activity logs for RFQ creation, bid submissions, and time extensions
+- Preserve append-only activity logs with sequence numbers and hash-chain verification
+- Close expired auctions through a scheduled Celery task
+- Apply API rate limiting and request body size limits
 - Expose listing and details views through React
 - Authenticate buyers and suppliers with signed bearer tokens
 - Restrict RFQ creation to buyers and bidding to invited suppliers
@@ -149,6 +155,8 @@ VITE_API_URL=http://localhost:8000
 docker compose up --build
 ```
 
+This starts PostgreSQL, Redis, the FastAPI API, a Celery worker, and Celery Beat for scheduled close checks.
+
 Then run the frontend separately:
 
 ```bash
@@ -181,6 +189,9 @@ Current backend coverage includes:
 - non-lowering supplier rebid rejection
 - invalid/imported bid history protection
 - API route persistence behavior
+- append-only audit log protection
+- scheduled auction close transitions
+- API rate-limit and body-size guard decisions
 
 ## Deployment Plan
 
@@ -196,9 +207,21 @@ DATABASE_URL=<Railway PostgreSQL DATABASE_URL>
 CORS_ORIGINS=<Vercel frontend URL>
 SECRET_KEY=<long random secret>
 SEED_DEMO_USERS=false
+API_RATE_LIMIT_PER_MINUTE=300
+AUTH_RATE_LIMIT_PER_MINUTE=20
+API_MAX_BODY_BYTES=1048576
+CELERY_BROKER_URL=<Redis URL>
+CELERY_RESULT_BACKEND=<Redis URL>
 ```
 
 Railway commonly provides `postgres://...`; the app automatically normalizes it to the psycopg SQLAlchemy URL.
+
+Run the Celery worker and Beat as separate Railway services using the same backend image:
+
+```bash
+celery -A app.celery_app:celery_app worker -l info
+celery -A app.celery_app:celery_app beat -l info
+```
 
 ### Frontend on Vercel
 
@@ -218,6 +241,8 @@ The important auction rules live in `backend/app/services/auction.py` as pure Py
 
 The FastAPI route layer handles HTTP concerns, authentication, authorization, database persistence, duplicate RFQ checks, row-level locking for bid writes, pagination, and response shaping. SQLAlchemy models use unique constraints for RFQ references and invitations, fixed-precision money columns, and relationship cascades for bids/logs.
 
+Operational safeguards include Alembic migrations at container startup, API rate/body limits, append-only audit logs with tamper-evident hashes, and Celery Beat-driven close transition jobs.
+
 The React app is intentionally API-driven. It does not calculate final auction state locally; it displays the state returned by the backend.
 
 ## Security Notes
@@ -228,6 +253,8 @@ The React app is intentionally API-driven. It does not calculate final auction s
 - Bid submission time is assigned by the server so suppliers cannot backdate quotes into closed auctions.
 - Supplier users only see their own bid records. Competitor names and charge breakdowns are masked in rankings.
 - The API uses bearer tokens, strict CORS headers, and basic security headers.
+- The API enforces per-client request throttling and request body size limits.
+- Activity logs are append-only at the ORM layer and chained with hashes to make tampering detectable.
 - Duplicate RFQ references are protected by both app-level validation and a database unique constraint.
 - Bid writes use `SELECT ... FOR UPDATE` on supported databases to serialize close-time extension decisions.
 
@@ -236,8 +263,6 @@ The React app is intentionally API-driven. It does not calculate final auction s
 For a full production rollout, I would still add:
 
 - Managed user provisioning and password reset flows
-- CI/CD with migration checks and frontend/backend builds
-- immutable append-only audit logs
-- Celery jobs for scheduled auction close transitions
 - Redis caching for read-heavy listing pages
-- rate limiting and request body size limits at the API gateway
+- Distributed rate limiting at the external API gateway/CDN layer
+- Observability dashboards and alerting for worker failures

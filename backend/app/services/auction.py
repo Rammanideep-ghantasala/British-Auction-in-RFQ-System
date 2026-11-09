@@ -199,6 +199,9 @@ def current_rankings(bids: Iterable[BidLike]) -> list[RankedQuote]:
 
 
 def auction_status(auction: AuctionLike, now: datetime) -> str:
+    if getattr(auction, "closed_at", None) is not None:
+        return "Force Closed" if getattr(auction, "close_reason", None) == "forced-close" else "Closed"
+
     current_time = as_utc(now)
     start_at = as_utc(auction.start_at)
     close_at = as_utc(auction.close_at)

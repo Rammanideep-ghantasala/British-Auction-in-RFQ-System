@@ -16,7 +16,10 @@ The implementation covers:
 - Supplier ranking by total quote
 - Automatic extension when trigger conditions are met
 - Forced close cap enforcement
-- Activity logs for RFQ creation, bids, and extensions
+- Append-only activity logs for RFQ creation, bids, extensions, and close transitions
+- Scheduled auction close transitions through Celery Beat and Celery workers
+- API rate limiting and request body size enforcement
+- CI checks for migrations, backend tests, and frontend builds
 - React UI for listing, details, RFQ creation, and bidding
 - FastAPI REST backend with PostgreSQL-ready persistence
 
@@ -34,7 +37,11 @@ The implementation covers:
 | React Frontend | Login, RFQ listing, RFQ creation, auction details, bid submission |
 | FastAPI Backend | REST APIs, authentication, authorization, auction validation, bid processing |
 | Auction Domain Service | Pure business logic for ranking, extensions, close validation, and rebid rules |
+| Audit Service | Appends tamper-evident activity log entries with sequence numbers and hashes |
+| Celery Worker + Beat | Periodically closes expired auctions and writes close audit events |
 | PostgreSQL Database | Stores users, auctions, invitations, bids, and activity logs |
+| Redis | Celery broker/result backend for scheduled jobs |
+| GitHub Actions | Runs migration check, backend tests, and frontend production build |
 | Railway | Hosts FastAPI backend and PostgreSQL |
 | Vercel | Hosts React frontend |
 
@@ -64,6 +71,14 @@ The implementation covers:
 7. Backend caps extension at forced close time.
 8. Backend stores bid and activity logs.
 
+### Scheduled Close Transition
+
+1. Celery Beat triggers the close-expired-auctions task every configured interval.
+2. Worker selects auctions with `close_at <= now` that have not already been marked closed.
+3. Worker records `closed_at` and `close_reason`.
+4. Worker appends a `closed` audit event.
+5. Re-running the job is idempotent; already closed auctions are skipped.
+
 ## Auction Rules
 
 - Quote total = freight charges + origin charges + destination charges.
@@ -88,6 +103,8 @@ The implementation covers:
 - SQLAlchemy ORM is used for database queries.
 - CORS is restricted to the deployed frontend origin.
 - Security headers are set by the backend.
+- API middleware enforces per-client request throttling and body size limits.
+- Activity logs are append-only at the ORM layer and chained with SHA-256 hashes.
 
 ## Deployment
 
@@ -96,6 +113,8 @@ The implementation covers:
 | Frontend | Vercel |
 | Backend | Railway |
 | Database | Railway PostgreSQL |
+| Worker/Beat | Railway worker services using the backend image |
+| Broker | Redis |
 
 Live frontend:
 
@@ -126,9 +145,12 @@ Backend tests cover:
 - duplicate RFQ reference handling
 - late bid rejection
 - non-lowering rebid rejection
+- append-only audit log protection
+- scheduled close transition idempotency
+- API rate-limit and body-size guards
 
 Current verified result:
 
 ```text
-22 backend tests passing
+26 backend tests passing
 ```

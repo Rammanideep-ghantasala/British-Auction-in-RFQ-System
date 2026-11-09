@@ -11,10 +11,14 @@ from sqlalchemy.pool import StaticPool
 from app.api import auth as auth_routes
 from app.api import rfqs as rfq_routes
 from app.main import health
-from app.models import Base, User, UserRole
+from app.core.config import settings
+from app.middleware import RequestControlsMiddleware
+from app.models import ActivityLog, Base, RFQAuction, User, UserRole
 from app.schemas import AuctionConfigIn, AuctionCreate, BidCreate, LoginRequest
 from app.security import decode_access_token, get_current_user, seed_demo_users
-from app.services.auction import TriggerType
+from app.services.audit import verify_activity_log_chain
+from app.services.auction import TriggerType, as_utc
+from app.services.auction_closure import close_expired_auctions
 
 
 def make_db():
@@ -170,6 +174,10 @@ def test_submit_bid_extends_auction_and_logs_activity(monkeypatch):
     assert body["rankings"][0]["rank"] == "L1"
     assert {entry["type"] for entry in body["activity_log"]} == {"created", "bid", "extension"}
 
+    logs = list(db.scalars(select(ActivityLog).where(ActivityLog.auction_id == created["id"]).order_by(ActivityLog.sequence_number)))
+    assert [log.sequence_number for log in logs] == [1, 2, 3]
+    assert verify_activity_log_chain(logs)
+
 
 def test_supplier_cannot_bid_on_uninvited_auction(monkeypatch):
     db = make_db()
@@ -289,3 +297,83 @@ def test_rejects_bid_after_close(monkeypatch):
     )
 
     assert error.detail == ["Auction is closed and cannot accept bids."]
+
+
+def test_activity_logs_are_append_only():
+    db = make_db()
+    buyer, supplier, _ = users(db)
+    created = create_auction(db, buyer, [supplier.id])
+    log = db.scalars(select(ActivityLog).where(ActivityLog.auction_id == created["id"])).first()
+
+    log.message = "tampered"
+
+    with pytest.raises(ValueError, match="append-only"):
+        db.commit()
+
+
+def test_close_expired_auctions_transitions_once_and_logs(monkeypatch):
+    db = make_db()
+    buyer, supplier, _ = users(db)
+    created = create_auction(db, buyer, [supplier.id])
+    now = datetime.fromisoformat("2026-01-01T10:01:00+00:00")
+
+    assert close_expired_auctions(db, now=now) == 1
+    assert close_expired_auctions(db, now=now) == 0
+
+    auction = db.get(RFQAuction, created["id"])
+    logs = list(db.scalars(select(ActivityLog).where(ActivityLog.auction_id == created["id"]).order_by(ActivityLog.sequence_number)))
+
+    assert as_utc(auction.closed_at).isoformat() == "2026-01-01T10:00:00+00:00"
+    assert auction.close_reason == "scheduled-close"
+    assert [log.type for log in logs] == ["created", "closed"]
+    assert verify_activity_log_chain(logs)
+
+
+def test_request_body_size_limit(monkeypatch):
+    original_limit = settings.api_max_body_bytes
+    original_rate_limit = settings.api_rate_limit_per_minute
+    settings.api_max_body_bytes = 12
+    settings.api_rate_limit_per_minute = 0
+
+    try:
+        guarded = RequestControlsMiddleware(lambda *_: None)
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/echo",
+            "headers": [(b"content-length", b"13")],
+            "client": ("127.0.0.1", 50000),
+        }
+        body_too_large = guarded._content_length(scope) > settings.api_max_body_bytes
+    finally:
+        settings.api_max_body_bytes = original_limit
+        settings.api_rate_limit_per_minute = original_rate_limit
+
+    assert body_too_large
+
+
+def test_api_rate_limit(monkeypatch):
+    original_limit = settings.api_rate_limit_per_minute
+    original_body_limit = settings.api_max_body_bytes
+    settings.api_rate_limit_per_minute = 2
+    settings.api_max_body_bytes = 1024
+
+    try:
+        guarded = RequestControlsMiddleware(lambda *_: None)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/ping",
+            "headers": [],
+            "client": ("127.0.0.2", 50000),
+        }
+        first = guarded._rate_limit_retry_after(scope)
+        second = guarded._rate_limit_retry_after(scope)
+        limited = guarded._rate_limit_retry_after(scope)
+    finally:
+        settings.api_rate_limit_per_minute = original_limit
+        settings.api_max_body_bytes = original_body_limit
+
+    assert first is None
+    assert second is None
+    assert limited is not None
