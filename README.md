@@ -2,6 +2,30 @@
 
 Full-stack RFQ application for British Auction-style bidding. The project is structured for the Full Stack Intern role requirements: FastAPI backend, React frontend, PostgreSQL-ready persistence, REST APIs, and test coverage for the auction rules.
 
+## Live Demo
+
+Frontend:
+
+```text
+https://frontend-one-jade-ojg8dffinq.vercel.app
+```
+
+Backend health:
+
+```text
+https://british-auction-rfq-system-production.up.railway.app/health
+```
+
+## Assignment Deliverables
+
+| Deliverable | Location |
+| --- | --- |
+| Simple HLD | [docs/HLD.md](docs/HLD.md) |
+| Architecture Diagram | [docs/architecture-diagram.md](docs/architecture-diagram.md) |
+| Database Schema Design | [docs/database-schema.md](docs/database-schema.md) |
+| Backend Code | [backend/](backend/) |
+| Frontend Code | [frontend/](frontend/) |
+
 ## Tech Stack
 
 - Backend: Python, FastAPI, SQLAlchemy 2, Pydantic
@@ -29,6 +53,7 @@ frontend/
     api.js            API client
     formatters.js     display/date helpers
 docker-compose.yml    PostgreSQL + API local stack
+docs/                 HLD, architecture diagram, and schema design
 ```
 
 ## Requirements Covered
