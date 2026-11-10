@@ -131,6 +131,8 @@ def validate_auction_window(
         errors.append("Forced bid close date and time must be later than bid close date and time.")
     if not pickup_at:
         errors.append("Pickup or service date is required.")
+    elif as_utc(pickup_at) <= as_utc(forced_close_at):
+        errors.append("Pickup or service date must be later than forced bid close date and time.")
     if trigger_window_minutes <= 0:
         errors.append("Trigger window must be greater than zero.")
     if extension_minutes <= 0:

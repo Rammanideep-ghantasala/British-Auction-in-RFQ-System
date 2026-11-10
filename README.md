@@ -81,6 +81,8 @@ docs/                 HLD, architecture diagram, and schema design
   - L1 rank change in last X minutes
 - Never extend beyond forced bid close time
 - Reject duplicate RFQ reference IDs
+- Reject RFQs without at least one invited active supplier
+- Reject pickup/service dates that are not after forced bid close
 - Reject supplier rebids that do not lower their current quote
 - Record activity logs for RFQ creation, bid submissions, and time extensions
 - Preserve append-only activity logs with sequence numbers and hash-chain verification
@@ -91,6 +93,7 @@ docs/                 HLD, architecture diagram, and schema design
 - Restrict RFQ creation to buyers and bidding to invited suppliers
 - Mask competitor quote details from supplier users
 - Paginate RFQ listing responses
+- Provide frontend pagination controls for RFQ listings
 - Store money using fixed-precision Decimal/Numeric values
 
 ## Reviewer Demo Accounts
@@ -107,6 +110,8 @@ apex@carrier.test / RfqReview9WJ4xM72QpZ6L
 Supplier:
 swift@carrier.test / RfqReview9WJ4xM72QpZ6L
 ```
+
+On the sign-in screen, demo account buttons fill the email only. Enter the reviewer password manually from this README.
 
 For local development, `backend/.env.example` uses `DEMO_USER_PASSWORD=password123`.
 
@@ -178,6 +183,9 @@ npm run dev
 
 ```bash
 python -m pytest backend/tests
+cd frontend
+pnpm run test
+pnpm run build
 ```
 
 Current backend coverage includes:
@@ -194,6 +202,8 @@ Current backend coverage includes:
 - supplier masking for competitor bid details
 - Decimal money precision
 - listing pagination behavior
+- RFQ supplier invitation validation
+- pickup/service date validation
 - duplicate reference rejection
 - non-lowering supplier rebid rejection
 - invalid/imported bid history protection
@@ -201,6 +211,14 @@ Current backend coverage includes:
 - append-only audit log protection
 - scheduled auction close transitions
 - API rate-limit and body-size guard decisions
+
+Current frontend coverage includes:
+
+- demo account buttons do not auto-fill or expose the password
+- rejected bid submissions preserve typed values
+- successful bid submissions reset the quote form
+- RFQ listing pagination controls
+- quote money formatting keeps decimal precision visible
 
 ## Deployment
 
@@ -292,7 +310,9 @@ The deployed demo has been verified with:
 - Celery worker connected to Redis
 - Celery Beat sending the scheduled `app.tasks.close_expired_auctions` task
 - scheduled auction close task completing successfully
-- backend test suite passing locally with `26 passed`
+- backend test suite passing locally with `28 passed`
+- frontend test suite passing locally with `5 passed`
+- frontend production build passing locally
 
 ## Security Notes
 

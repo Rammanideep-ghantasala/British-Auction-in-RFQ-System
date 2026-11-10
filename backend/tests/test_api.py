@@ -162,6 +162,36 @@ def test_duplicate_reference_is_rejected():
     assert error.detail == ["Reference ID must be unique."]
 
 
+def test_create_auction_requires_at_least_one_supplier():
+    db = make_db()
+    buyer, _, _ = users(db)
+
+    error = expect_http_error(
+        422,
+        lambda: rfq_routes.create_auction(
+            auction_payload("RFQ-NO-SUPPLIERS", []),
+            db=db,
+            current_user=buyer,
+        ),
+    )
+
+    assert error.detail == ["At least one active supplier must be invited."]
+
+
+def test_create_auction_requires_pickup_after_forced_close():
+    db = make_db()
+    buyer, supplier, _ = users(db)
+    payload = auction_payload("RFQ-BAD-PICKUP", [supplier.id])
+    payload.pickup_at = datetime(2026, 1, 1, 10, 15, tzinfo=timezone.utc)
+
+    error = expect_http_error(
+        422,
+        lambda: rfq_routes.create_auction(payload, db=db, current_user=buyer),
+    )
+
+    assert error.detail == ["Pickup or service date must be later than forced bid close date and time."]
+
+
 def test_submit_bid_extends_auction_and_logs_activity(monkeypatch):
     db = make_db()
     buyer, supplier, _ = users(db)

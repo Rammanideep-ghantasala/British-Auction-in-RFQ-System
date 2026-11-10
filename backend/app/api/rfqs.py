@@ -194,7 +194,7 @@ def _invited_suppliers(db: Session, supplier_ids: list[str]) -> list[User]:
         )
     )
     if len(suppliers) != len(unique_supplier_ids):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=["One or more suppliers are invalid."])
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=["One or more suppliers are invalid."])
     return suppliers
 
 
@@ -235,6 +235,12 @@ def create_auction(
     if duplicate:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=["Reference ID must be unique."])
 
+    if not set(payload.supplier_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=["At least one active supplier must be invited."],
+        )
+
     config = payload.config
     errors = auction_service.validate_auction_window(
         name=payload.name,
@@ -249,7 +255,7 @@ def create_auction(
         trigger_type=config.trigger_type.value,
     )
     if errors:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=errors)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=errors)
 
     suppliers = _invited_suppliers(db, payload.supplier_ids)
     auction = RFQAuction(

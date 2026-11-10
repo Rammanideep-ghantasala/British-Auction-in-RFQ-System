@@ -1,19 +1,30 @@
+import { useState } from "react";
+
 export function BidForm({ auction, user, onSubmit }) {
-  const disabled = auction.status !== "Active" || user.role !== "supplier";
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const disabled = isSubmitting || auction.status !== "Active" || user.role !== "supplier";
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
 
-    onSubmit({
-      freight_charges: Number(data.get("freight_charges")),
-      origin_charges: Number(data.get("origin_charges")),
-      destination_charges: Number(data.get("destination_charges")),
-      transit_time: data.get("transit_time"),
-      validity: data.get("validity")
-    });
+    setIsSubmitting(true);
+    try {
+      const submitted = await onSubmit({
+        freight_charges: data.get("freight_charges"),
+        origin_charges: data.get("origin_charges"),
+        destination_charges: data.get("destination_charges"),
+        transit_time: data.get("transit_time"),
+        validity: data.get("validity")
+      });
 
-    event.currentTarget.reset();
+      if (submitted !== false) {
+        form.reset();
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -25,15 +36,15 @@ export function BidForm({ auction, user, onSubmit }) {
         </label>
         <label>
           Freight Charges
-          <input name="freight_charges" type="number" min="0" step="100" required disabled={disabled} />
+          <input name="freight_charges" type="number" min="0" step="0.01" inputMode="decimal" required disabled={disabled} />
         </label>
         <label>
           Origin Charges
-          <input name="origin_charges" type="number" min="0" step="100" required disabled={disabled} />
+          <input name="origin_charges" type="number" min="0" step="0.01" inputMode="decimal" required disabled={disabled} />
         </label>
         <label>
           Destination Charges
-          <input name="destination_charges" type="number" min="0" step="100" required disabled={disabled} />
+          <input name="destination_charges" type="number" min="0" step="0.01" inputMode="decimal" required disabled={disabled} />
         </label>
         <label>
           Transit Time
@@ -46,7 +57,7 @@ export function BidForm({ auction, user, onSubmit }) {
       </div>
       <div className="form-actions">
         <button className="primary-button" type="submit" disabled={disabled}>
-          Submit Quote
+          {isSubmitting ? "Submitting" : "Submit Quote"}
         </button>
       </div>
     </form>

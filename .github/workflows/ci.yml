@@ -41,8 +41,17 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Enable pnpm
+        run: corepack enable
+
       - name: Install frontend dependencies
-        run: npm --prefix frontend install
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: pnpm run test
 
       - name: Build frontend
-        run: npm --prefix frontend run build
+        working-directory: frontend
+        run: pnpm run build

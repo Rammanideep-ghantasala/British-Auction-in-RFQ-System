@@ -1,6 +1,14 @@
 import { dateTime, money, statusClass } from "../formatters";
 
-export function AuctionList({ auctions, selectedId, canCreate, onSelect, onCreate }) {
+export function AuctionList({ auctions, selectedId, canCreate, page, onSelect, onCreate, onPageChange }) {
+  const limit = page?.limit || 25;
+  const offset = page?.offset || 0;
+  const total = page?.total || auctions.length;
+  const firstItem = total === 0 ? 0 : offset + 1;
+  const lastItem = Math.min(offset + auctions.length, total);
+  const canGoBack = offset > 0;
+  const canGoForward = offset + limit < total;
+
   return (
     <section className="auction-listing" aria-labelledby="auction-listing-title">
       <div className="section-toolbar">
@@ -56,6 +64,29 @@ export function AuctionList({ auctions, selectedId, canCreate, onSelect, onCreat
               ))}
             </tbody>
           </table>
+          <div className="pagination-bar">
+            <span>
+              Showing {firstItem}-{lastItem} of {total}
+            </span>
+            <div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => onPageChange(offset - limit)}
+                disabled={!canGoBack}
+              >
+                Previous
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => onPageChange(offset + limit)}
+                disabled={!canGoForward}
+              >
+                Next
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </section>

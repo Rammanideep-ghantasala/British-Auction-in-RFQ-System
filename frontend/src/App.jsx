@@ -6,6 +6,7 @@ import { RfqCreateForm } from "./components/RfqCreateForm";
 import { createAuction, getAuction, getMe, listAuctions, listSuppliers, login, submitBid } from "./api";
 
 const sessionKey = "british-auction-session";
+const defaultPage = { limit: 25, offset: 0, total: 0 };
 
 function readStoredSession() {
   try {
@@ -19,6 +20,7 @@ export default function App() {
   const [session, setSession] = useState(readStoredSession);
   const [auctions, setAuctions] = useState([]);
   const [selectedAuction, setSelectedAuction] = useState(null);
+  const [auctionPage, setAuctionPage] = useState(defaultPage);
   const [suppliers, setSuppliers] = useState([]);
   const [mode, setMode] = useState("details");
   const [isLoading, setIsLoading] = useState(false);
@@ -59,17 +61,30 @@ export default function App() {
     }
   }
 
-  async function refreshAuctions(nextSelectedId, activeToken = token) {
+  async function refreshAuctions(nextSelectedId, activeToken = token, pageOptions = {}) {
     if (!activeToken) {
       return;
     }
 
+    const requestedPage = {
+      limit: auctionPage.limit,
+      offset: auctionPage.offset,
+      ...pageOptions
+    };
+
     setIsLoading(true);
     try {
-      const page = await listAuctions(activeToken);
+      const page = await listAuctions(activeToken, requestedPage);
       const items = page.items || [];
       setAuctions(items);
-      const selectedId = nextSelectedId || selectedAuction?.id || items[0]?.id;
+      setAuctionPage({
+        total: page.total || 0,
+        limit: page.limit || requestedPage.limit,
+        offset: page.offset || requestedPage.offset
+      });
+
+      const currentSelectionIsVisible = items.some((auction) => auction.id === selectedAuction?.id);
+      const selectedId = nextSelectedId || (currentSelectionIsVisible ? selectedAuction?.id : items[0]?.id);
       if (selectedId) {
         const detail = await getAuction(selectedId, activeToken);
         setSelectedAuction(detail);
@@ -105,6 +120,7 @@ export default function App() {
     localStorage.removeItem(sessionKey);
     setSession(null);
     setAuctions([]);
+    setAuctionPage(defaultPage);
     setSelectedAuction(null);
     setSuppliers([]);
     setMode("details");
@@ -125,7 +141,7 @@ export default function App() {
       const created = await createAuction(payload, token);
       setMode("details");
       setNotice({ type: "success", message: `${created.reference_id} created.` });
-      await refreshAuctions(created.id);
+      await refreshAuctions(created.id, token, { offset: 0 });
     } catch (error) {
       setNotice({ type: "error", message: error.message });
     }
@@ -141,9 +157,17 @@ export default function App() {
       setSelectedAuction(updated);
       setNotice({ type: "success", message: "Quote submitted." });
       await refreshAuctions(updated.id);
+      return true;
     } catch (error) {
       setNotice({ type: "error", message: error.message });
+      return false;
     }
+  }
+
+  async function handlePageChange(nextOffset) {
+    setMode("details");
+    setNotice(null);
+    await refreshAuctions(undefined, token, { offset: Math.max(0, nextOffset) });
   }
 
   if (!session) {
@@ -197,7 +221,9 @@ export default function App() {
           auctions={auctions}
           selectedId={selectedAuction?.id}
           canCreate={isBuyer}
+          page={auctionPage}
           onSelect={handleSelect}
+          onPageChange={handlePageChange}
           onCreate={() => {
             setMode("create");
             setNotice(null);

@@ -167,6 +167,11 @@ h3 {
   gap: 8px;
 }
 
+.demo-accounts p {
+  margin: 0 0 2px;
+  font-size: 0.86rem;
+}
+
 .demo-accounts .secondary-button {
   width: 100%;
   min-height: 38px;
@@ -245,6 +250,23 @@ h3 {
 
 .table-wrap.compact {
   box-shadow: none;
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.pagination-bar div {
+  display: flex;
+  gap: 8px;
 }
 
 table {
@@ -610,7 +632,8 @@ input:focus {
   .topbar-actions,
   .section-toolbar,
   .detail-heading,
-  .form-actions {
+  .form-actions,
+  .pagination-bar {
     align-items: flex-start;
     flex-direction: column;
   }
