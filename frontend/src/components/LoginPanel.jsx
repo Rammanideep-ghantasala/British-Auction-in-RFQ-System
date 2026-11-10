@@ -6,6 +6,8 @@ const demoAccounts = [
   { label: "Supplier", email: "swift@carrier.test" }
 ];
 
+const reviewerPassword = import.meta.env.VITE_REVIEWER_PASSWORD || "password123";
+
 export function LoginPanel({ onLogin, isLoading }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -17,7 +19,7 @@ export function LoginPanel({ onLogin, isLoading }) {
 
   function handleSelectAccount(account) {
     setEmail(account.email);
-    setPassword("");
+    setPassword(reviewerPassword);
   }
 
   return (
@@ -50,7 +52,7 @@ export function LoginPanel({ onLogin, isLoading }) {
         </form>
 
         <div className="demo-accounts" aria-label="Demo accounts">
-          <p className="muted">Demo account buttons fill the email only. Use the reviewer password from the README.</p>
+          <p className="muted">Demo account buttons fill the email and password for quick prototype review.</p>
           {demoAccounts.map((account) => (
             <button
               className="secondary-button"

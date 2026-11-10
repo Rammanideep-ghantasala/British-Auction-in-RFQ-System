@@ -111,7 +111,7 @@ Supplier:
 swift@carrier.test / RfqReview9WJ4xM72QpZ6L
 ```
 
-On the sign-in screen, demo account buttons fill the email only. Enter the reviewer password manually from this README.
+On the sign-in screen, demo account buttons fill both email and password for quick prototype review. The reviewer still clicks **Sign In** manually.
 
 For local development, `backend/.env.example` uses `DEMO_USER_PASSWORD=password123`.
 
@@ -214,7 +214,7 @@ Current backend coverage includes:
 
 Current frontend coverage includes:
 
-- demo account buttons do not auto-fill or expose the password
+- demo account buttons fill email and password for quick prototype review
 - rejected bid submissions preserve typed values
 - successful bid submissions reset the quote form
 - RFQ listing pagination controls

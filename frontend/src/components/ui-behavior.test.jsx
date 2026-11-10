@@ -31,14 +31,14 @@ async function fillBidForm() {
 }
 
 describe("LoginPanel", () => {
-  it("keeps the password blank when a demo account is selected", async () => {
+  it("fills email and password when a demo account is selected", async () => {
     const user = userEvent.setup();
     render(<LoginPanel onLogin={vi.fn()} isLoading={false} />);
 
     await user.click(screen.getByRole("button", { name: /Buyer: buyer@gocomet\.test/i }));
 
     expect(screen.getByLabelText(/Email/i).value).toBe("buyer@gocomet.test");
-    expect(screen.getByLabelText(/Password/i).value).toBe("");
+    expect(screen.getByLabelText(/Password/i).value).toBe("password123");
   });
 });
 
