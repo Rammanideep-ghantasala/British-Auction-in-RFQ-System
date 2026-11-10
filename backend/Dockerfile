@@ -7,9 +7,13 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY app ./app
 COPY alembic.ini .
 COPY migrations ./migrations
+RUN chown -R app:app /app
+
+USER app
 
 CMD ["sh", "-c", "python -m app.migrate && if [ \"$RUN_CELERY_IN_WEB\" = \"true\" ]; then celery -A app.celery_app:celery_app worker -B -l info --pool=solo --concurrency=1 & fi && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
