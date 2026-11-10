@@ -16,6 +16,15 @@ Backend health:
 https://british-auction-rfq-system-production.up.railway.app/health
 ```
 
+Current deployed backend setup:
+
+- Railway backend service: FastAPI, Alembic migrations, and optional in-container Celery runner
+- Railway PostgreSQL service: production database
+- Railway Redis service: Celery broker/result backend
+- Vercel frontend service: React/Vite UI connected to the Railway API
+
+For the live recruiter demo, `RUN_CELERY_IN_WEB=true` is enabled because Railway's free resource limit blocked separate Celery Worker and Celery Beat services. The scheduled auction close job is still active and runs every 60 seconds through Celery Beat inside the backend container. For production, upgrade Railway and split the worker and beat into separate services.
+
 ## Assignment Deliverables
 
 | Deliverable | Location |
@@ -193,14 +202,15 @@ Current backend coverage includes:
 - scheduled auction close transitions
 - API rate-limit and body-size guard decisions
 
-## Deployment Plan
+## Deployment
 
 ### Backend on Railway
 
 1. Create a Railway project.
 2. Add a PostgreSQL service.
-3. Deploy the `backend/` service from GitHub.
-4. Set environment variables:
+3. Add a Redis service.
+4. Deploy the `backend/` service from GitHub or with the Railway CLI using `backend/` as the service root.
+5. Set environment variables:
 
 ```text
 DATABASE_URL=<Railway PostgreSQL DATABASE_URL>
@@ -212,19 +222,43 @@ AUTH_RATE_LIMIT_PER_MINUTE=20
 API_MAX_BODY_BYTES=1048576
 CELERY_BROKER_URL=<Redis URL>
 CELERY_RESULT_BACKEND=<Redis URL>
-RUN_CELERY_IN_WEB=false
+AUCTION_CLOSE_SCAN_INTERVAL_SECONDS=60
+RUN_CELERY_IN_WEB=true
 ```
 
 Railway commonly provides `postgres://...`; the app automatically normalizes it to the psycopg SQLAlchemy URL.
 
-Run the Celery worker and Beat as separate Railway services using the same backend image:
+For a free-plan demo, keep `RUN_CELERY_IN_WEB=true`. This starts a lightweight Celery worker and Celery Beat inside the backend container:
+
+```bash
+celery -A app.celery_app:celery_app worker -B -l info --pool=solo --concurrency=1
+```
+
+For production, set `RUN_CELERY_IN_WEB=false` and run Celery Worker and Celery Beat as separate Railway services using the same backend image:
 
 ```bash
 celery -A app.celery_app:celery_app worker -l info
 celery -A app.celery_app:celery_app beat -l info
 ```
 
-If the Railway plan cannot provision extra services, set `RUN_CELERY_IN_WEB=true` on the backend service. That runs Celery Beat and the worker inside the existing backend container for demo deployments. For production, prefer separate worker and beat services.
+Recommended production service layout:
+
+```text
+Backend Web Service
+  command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+Celery Worker Service
+  command: celery -A app.celery_app:celery_app worker -l info
+
+Celery Beat Service
+  command: celery -A app.celery_app:celery_app beat -l info
+
+Redis Service
+  used by: CELERY_BROKER_URL and CELERY_RESULT_BACKEND
+
+PostgreSQL Service
+  used by: DATABASE_URL
+```
 
 ### Frontend on Vercel
 
@@ -247,6 +281,18 @@ The FastAPI route layer handles HTTP concerns, authentication, authorization, da
 Operational safeguards include Alembic migrations at container startup, API rate/body limits, append-only audit logs with tamper-evident hashes, and Celery Beat-driven close transition jobs.
 
 The React app is intentionally API-driven. It does not calculate final auction state locally; it displays the state returned by the backend.
+
+## Current Demo Verification
+
+The deployed demo has been verified with:
+
+- backend health check returning `{"status":"ok"}`
+- Railway backend deployment status `SUCCESS`
+- Railway Redis deployment status `SUCCESS`
+- Celery worker connected to Redis
+- Celery Beat sending the scheduled `app.tasks.close_expired_auctions` task
+- scheduled auction close task completing successfully
+- backend test suite passing locally with `26 passed`
 
 ## Security Notes
 
