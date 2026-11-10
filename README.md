@@ -212,6 +212,7 @@ AUTH_RATE_LIMIT_PER_MINUTE=20
 API_MAX_BODY_BYTES=1048576
 CELERY_BROKER_URL=<Redis URL>
 CELERY_RESULT_BACKEND=<Redis URL>
+RUN_CELERY_IN_WEB=false
 ```
 
 Railway commonly provides `postgres://...`; the app automatically normalizes it to the psycopg SQLAlchemy URL.
@@ -222,6 +223,8 @@ Run the Celery worker and Beat as separate Railway services using the same backe
 celery -A app.celery_app:celery_app worker -l info
 celery -A app.celery_app:celery_app beat -l info
 ```
+
+If the Railway plan cannot provision extra services, set `RUN_CELERY_IN_WEB=true` on the backend service. That runs Celery Beat and the worker inside the existing backend container for demo deployments. For production, prefer separate worker and beat services.
 
 ### Frontend on Vercel
 
