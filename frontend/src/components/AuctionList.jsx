@@ -49,7 +49,7 @@ export function AuctionList({ auctions, selectedId, canCreate, page, onSelect, o
               {auctions.map((auction) => (
                 <tr key={auction.id} className={auction.id === selectedId ? "selected" : ""}>
                   <td>
-                    <button className="row-button" type="button" onClick={() => onSelect(auction.id)}>
+                    <button className="row-button" type="button" aria-label={`${auction.reference_id} ${auction.name}`} onClick={() => onSelect(auction.id)}>
                       <strong>{auction.reference_id}</strong>
                       <span>{auction.name}</span>
                     </button>

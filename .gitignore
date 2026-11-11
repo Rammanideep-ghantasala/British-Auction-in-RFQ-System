@@ -7,6 +7,7 @@ venv/
 dev.db
 test.db
 .env
+.backups/
 
 node_modules/
 dist/

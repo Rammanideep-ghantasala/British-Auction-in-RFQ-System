@@ -34,6 +34,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     password_salt: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
@@ -58,7 +59,7 @@ class RFQAuction(Base):
     close_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     forced_close_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     pickup_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     close_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     trigger_window_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -120,13 +121,18 @@ class Bid(Base):
 
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
+    __table_args__ = (
+        UniqueConstraint("auction_id", "sequence_number", name="uq_activity_auction_sequence"),
+        Index("ix_activity_logs_auction_sequence", "auction_id", "sequence_number"),
+        Index("ix_activity_logs_entry_hash", "entry_hash"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     auction_id: Mapped[str] = mapped_column(ForeignKey("rfq_auctions.id", ondelete="CASCADE"), index=True)
     actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    sequence_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_entry_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    entry_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     type: Mapped[str] = mapped_column(String(40), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -144,3 +150,20 @@ def prevent_activity_log_update(*_) -> None:
 @event.listens_for(ActivityLog, "before_delete")
 def prevent_activity_log_delete(*_) -> None:
     raise ValueError("Activity logs are append-only and cannot be deleted.")
+
+
+class RevokedToken(Base):
+    __tablename__ = "revoked_tokens"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class JobHeartbeat(Base):
+    __tablename__ = "job_heartbeats"
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    succeeded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    processed_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+from app.audit_guards import register_guards
+register_guards(ActivityLog.__table__)

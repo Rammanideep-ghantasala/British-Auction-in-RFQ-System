@@ -9,7 +9,7 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import ActivityLog
+from app.models import ActivityLog, RFQAuction
 
 
 def _utc_now() -> datetime:
@@ -68,6 +68,8 @@ def append_activity_log(
     event_metadata: dict | None = None,
     actor_user_id: str | None = None,
 ) -> ActivityLog:
+    # All appenders serialize on the same parent row, including future callers.
+    db.execute(select(RFQAuction.id).where(RFQAuction.id == auction_id).with_for_update())
     previous_log = db.scalars(
         select(ActivityLog)
         .where(ActivityLog.auction_id == auction_id)

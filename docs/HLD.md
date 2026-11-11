@@ -113,7 +113,7 @@ The implementation covers:
 | Frontend | Vercel |
 | Backend | Railway |
 | Database | Railway PostgreSQL |
-| Worker/Beat | Railway worker services using the backend image |
+| Worker/Beat | Supervised inside the single Railway demo backend container; separate services recommended for production |
 | Broker | Redis |
 
 Live frontend:
@@ -152,5 +152,17 @@ Backend tests cover:
 Current verified result:
 
 ```text
-26 backend tests passing
+Run the backend and frontend suites; PostgreSQL and Redis integration cases require their test service URLs (see README).
 ```
+
+## Reliability update
+
+Supplier identity is the supplier user ID; company names are display values. SQL queries select only the latest quote per supplier for ranking. Bid/activity history has separate pagination (25 default, maximum 100), and the buyer UI displays every bid through those pages.
+
+The browser uses session-generation and request-order guards, RFQ-specific drafts, explicit logout/token revocation, 20-second request timeouts, and 15-second polling while visible. It renders readable validation errors and connection state.
+
+Versioned password hashes support legacy verification and rehashing at login. Production startup rejects unsafe keys/origins. Shared Redis counters enforce IP/account limits; forwarded headers require explicit proxy trust. CORS covers control errors.
+
+Audit history has database mutation triggers, unique sequences and non-null hashes. Legacy logs are backfilled at migration time. This does not protect against a database administrator disabling the triggers or rewriting the entire chain.
+
+Railway checks `/ready`; `/api/operations/jobs` reports close-job freshness to buyers. The demo supervisor restarts the container when a service exits. CI uses disposable PostgreSQL/Redis and checks schema drift, legacy upgrades, concurrent bids, HTTP regressions, UI races, audits and builds.

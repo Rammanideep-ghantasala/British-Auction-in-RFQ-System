@@ -62,7 +62,9 @@ def test_status_lifecycle():
     assert auction_status(rfq, datetime(2026, 1, 1, 8, 59, tzinfo=UTC)) == "Scheduled"
     assert auction_status(rfq, datetime(2026, 1, 1, 9, 0, tzinfo=UTC)) == "Active"
     assert auction_status(rfq, datetime(2026, 1, 1, 10, 0, tzinfo=UTC)) == "Closed"
-    assert auction_status(rfq, datetime(2026, 1, 1, 10, 30, tzinfo=UTC)) == "Force Closed"
+    assert auction_status(rfq, datetime(2026, 1, 1, 10, 30, tzinfo=UTC)) == "Closed"
+    capped = auction(close_at=rfq.forced_close_at)
+    assert auction_status(capped, datetime(2026, 1, 1, 10, 30, tzinfo=UTC)) == "Force Closed"
 
 
 def test_rankings_use_total_quote():

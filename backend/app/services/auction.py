@@ -44,6 +44,7 @@ class BidCandidate:
     transit_time: str
     validity: str
     submitted_at: datetime
+    supplier_user_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,12 @@ def normalize_reference(reference_id: str) -> str:
 
 def carrier_key(carrier_name: str) -> str:
     return carrier_name.strip().lower()
+
+
+def supplier_key(bid: BidLike) -> str:
+    # Legacy standalone/imported domain objects have no account ID. Persisted
+    # bids and all HTTP candidates must always use the stable account ID.
+    return getattr(bid, "supplier_user_id", None) or carrier_key(bid.carrier_name)
 
 
 def quote_total(bid: BidLike) -> Decimal:
@@ -173,20 +180,20 @@ def current_rankings(bids: Iterable[BidLike]) -> list[RankedQuote]:
     latest_by_carrier: dict[str, BidLike] = {}
 
     for bid in bids:
-        key = carrier_key(bid.carrier_name)
+        key = supplier_key(bid)
         existing = latest_by_carrier.get(key)
         if existing is None or as_utc(bid.submitted_at) >= as_utc(existing.submitted_at):
             latest_by_carrier[key] = bid
 
     ranked = sorted(
         latest_by_carrier.values(),
-        key=lambda bid: (quote_total(bid), as_utc(bid.submitted_at), bid.carrier_name.casefold()),
+        key=lambda bid: (quote_total(bid), as_utc(bid.submitted_at), bid.carrier_name.casefold(), supplier_key(bid)),
     )
 
     return [
         RankedQuote(
             carrier_name=bid.carrier_name,
-            carrier_key=carrier_key(bid.carrier_name),
+            carrier_key=supplier_key(bid),
             freight_charges=money(bid.freight_charges),
             origin_charges=money(bid.origin_charges),
             destination_charges=money(bid.destination_charges),
@@ -209,8 +216,6 @@ def auction_status(auction: AuctionLike, now: datetime) -> str:
     close_at = as_utc(auction.close_at)
     forced_close_at = as_utc(auction.forced_close_at)
 
-    if current_time >= forced_close_at:
-        return "Force Closed"
     if current_time >= close_at:
         return "Closed" if close_at < forced_close_at else "Force Closed"
     if current_time < start_at:
@@ -234,7 +239,7 @@ def validate_imported_bid_history(auction: AuctionLike, bids: list[BidLike]) -> 
 
     bids_by_carrier: dict[str, list[tuple[int, BidLike]]] = {}
     for index, bid in enumerate(bids):
-        bids_by_carrier.setdefault(carrier_key(bid.carrier_name), []).append((index, bid))
+        bids_by_carrier.setdefault(supplier_key(bid), []).append((index, bid))
 
     for carrier_bids in bids_by_carrier.values():
         chronological_bids = sorted(carrier_bids, key=lambda item: (as_utc(item[1].submitted_at), item[0]))
@@ -295,7 +300,7 @@ def evaluate_bid(auction: AuctionLike, existing_bids: list[BidLike], bid: BidCan
 
     before_rankings = current_rankings(existing_bids)
     current_supplier_quote = next(
-        (quote for quote in before_rankings if quote.carrier_key == carrier_key(bid.carrier_name)),
+        (quote for quote in before_rankings if quote.carrier_key == supplier_key(bid)),
         None,
     )
 

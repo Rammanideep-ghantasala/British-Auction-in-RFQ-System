@@ -1,7 +1,7 @@
 import { BidForm } from "./BidForm";
 import { dateTime, money, statusClass } from "../formatters";
 
-export function AuctionDetail({ auction, user, onSubmitBid }) {
+export function AuctionDetail({ auction, user, onSubmitBid, onHistoryChange = () => {} }) {
   if (!auction) {
     return (
       <section className="auction-detail">
@@ -50,7 +50,7 @@ export function AuctionDetail({ auction, user, onSubmitBid }) {
             <h3>Supplier Ranking</h3>
             <span>{auction.rankings.length} carriers</span>
           </div>
-          <RankingsTable rankings={auction.rankings} />
+          <RankingsTable rankings={auction.rankings} user={user} />
         </section>
 
         <section className="plain-section">
@@ -58,10 +58,16 @@ export function AuctionDetail({ auction, user, onSubmitBid }) {
             <h3>Quote Submission</h3>
             <span>{auction.config.trigger_type}</span>
           </div>
-          <BidForm auction={auction} user={user} onSubmit={onSubmitBid} />
+          <BidForm key={auction.id} auction={auction} user={user} onSubmit={(payload) => onSubmitBid(auction.id, payload)} />
         </section>
       </div>
 
+      <section className="plain-section lower-grid" aria-label="Bid history">
+        <div className="section-heading"><h3>{user.role === "buyer" ? "All Submitted Bids" : "Your Bid History"}</h3><span>Sorted by total price</span></div>
+        <BidHistory bids={auction.bids || []} />
+        <HistoryPager label="bids" total={auction.bids_total ?? auction.bids?.length ?? 0} offset={auction.bids_offset || 0}
+          limit={auction.history_limit || 25} onChange={(offset) => onHistoryChange({ bids_offset: offset })} />
+      </section>
       <div className="detail-grid lower-grid">
         <section className="plain-section">
           <div className="section-heading">
@@ -93,13 +99,15 @@ export function AuctionDetail({ auction, user, onSubmitBid }) {
             <span>{auction.activity_log.length} events</span>
           </div>
           <ActivityLog activity={auction.activity_log} />
+          <HistoryPager label="activity" total={auction.activity_total ?? auction.activity_log.length} offset={auction.activity_offset || 0}
+            limit={auction.history_limit || 25} onChange={(offset) => onHistoryChange({ activity_offset: offset })} />
         </section>
       </div>
     </section>
   );
 }
 
-function RankingsTable({ rankings }) {
+function RankingsTable({ rankings, user }) {
   if (rankings.length === 0) {
     return <p className="muted">No quotes submitted.</p>;
   }
@@ -121,14 +129,14 @@ function RankingsTable({ rankings }) {
         </thead>
         <tbody>
           {rankings.map((quote) => (
-            <tr key={`${quote.carrier_name}-${quote.submitted_at}`}>
+            <tr key={quote.rank}>
               <td>
                 <strong>{quote.rank}</strong>
               </td>
               <td>{quote.carrier_name}</td>
-              <td>{money(quote.freight_charges)}</td>
-              <td>{money(quote.origin_charges)}</td>
-              <td>{money(quote.destination_charges)}</td>
+              <td>{user.role === "supplier" && quote.is_own_quote === false ? "Hidden" : money(quote.freight_charges)}</td>
+              <td>{user.role === "supplier" && quote.is_own_quote === false ? "Hidden" : money(quote.origin_charges)}</td>
+              <td>{user.role === "supplier" && quote.is_own_quote === false ? "Hidden" : money(quote.destination_charges)}</td>
               <td>
                 <strong>{money(quote.total)}</strong>
               </td>
@@ -140,6 +148,27 @@ function RankingsTable({ rankings }) {
       </table>
     </div>
   );
+}
+
+function BidHistory({ bids }) {
+  if (!bids.length) return <p className="muted">No submitted bids.</p>;
+  return <div className="table-wrap compact"><table className="quote-table">
+    <thead><tr>{["Carrier", "Freight", "Origin", "Destination", "Total", "Transit", "Validity", "Submitted"].map((label) => <th key={label}>{label}</th>)}</tr></thead>
+    <tbody>{bids.map((bid) => <tr key={bid.id}>
+      <td>{bid.carrier_name}</td><td>{money(bid.freight_charges)}</td><td>{money(bid.origin_charges)}</td>
+      <td>{money(bid.destination_charges)}</td><td>{money(bid.total)}</td><td>{bid.transit_time}</td>
+      <td>{bid.validity}</td><td>{dateTime(bid.submitted_at)}</td>
+    </tr>)}</tbody>
+  </table></div>;
+}
+
+function HistoryPager({ label, total, offset, limit, onChange }) {
+  if (total <= limit && offset === 0) return null;
+  return <div className="pagination-bar" aria-label={`${label} pagination`}>
+    <span>{total ? offset + 1 : 0}-{Math.min(offset + limit, total)} of {total}</span>
+    <div><button className="secondary-button" type="button" disabled={offset === 0} onClick={() => onChange(Math.max(0, offset - limit))}>Previous {label}</button>
+      <button className="secondary-button" type="button" disabled={offset + limit >= total} onClick={() => onChange(offset + limit)}>Next {label}</button></div>
+  </div>;
 }
 
 function ActivityLog({ activity }) {

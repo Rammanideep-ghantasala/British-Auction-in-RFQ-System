@@ -20,6 +20,7 @@ erDiagram
         string role
         string password_hash
         string password_salt
+        integer token_version
         boolean is_active
         datetime created_at
     }
@@ -75,6 +76,15 @@ erDiagram
         datetime at
         json event_metadata
     }
+    REVOKED_TOKENS {
+        string token_hash PK
+        datetime expires_at
+    }
+    JOB_HEARTBEATS {
+        string name PK
+        datetime succeeded_at
+        integer processed_count
+    }
 ```
 
 ## Tables
@@ -92,6 +102,7 @@ Stores buyer and supplier users.
 | role | string(20) | indexed, not null | `buyer` or `supplier` |
 | password_hash | string(128) | not null | PBKDF2 password hash |
 | password_salt | string(64) | not null | Per-user salt |
+| token_version | integer | not null, default 0 | Password resets/deactivation invalidate earlier token versions |
 | is_active | boolean | not null | Account status |
 | created_at | datetime | not null | Creation time |
 
@@ -167,9 +178,9 @@ Stores audit/activity events for RFQs.
 | id | string(36) | PK | UUID log ID |
 | auction_id | string(36) | FK rfq_auctions.id, indexed, not null | Auction ID |
 | actor_user_id | string(36) | FK users.id, indexed, nullable | Acting user |
-| sequence_number | integer | indexed with auction_id, nullable for legacy rows | Per-auction append sequence |
+| sequence_number | integer | not null, unique with auction_id, indexed | Per-auction append sequence |
 | previous_entry_hash | string(64) | nullable | Previous log hash in the auction audit chain |
-| entry_hash | string(64) | indexed, nullable for legacy rows | SHA-256 hash of the canonical log payload |
+| entry_hash | string(64) | indexed, not null | SHA-256 hash of the canonical log payload |
 | type | string(40) | not null | Event type: `created`, `bid`, `extension`, `closed` |
 | message | text | not null | Human-readable event message |
 | at | datetime | not null | Event time |
@@ -180,6 +191,16 @@ Stores audit/activity events for RFQs.
 - Money fields use `NUMERIC(12,2)` instead of float to avoid rounding issues.
 - Supplier access is controlled through `auction_invitations`.
 - RFQ reference IDs are unique.
-- Each supplier can submit multiple bids, but only their latest valid bid is used for current ranking.
-- Activity logs are append-only in the application layer and chained with hashes so changed or reordered logs are detectable.
+- Each supplier account ID can submit multiple bids; a SQL window query selects its latest bid for ranking. Company names are not identity keys.
+- Activity logs reject UPDATE/DELETE via database triggers and PostgreSQL TRUNCATE as well. They have unique per-auction sequences and hash chaining. Administrators retain the ability to disable enforcement.
 - Scheduled close workers update `closed_at`/`close_reason` once and append a `closed` audit event.
+
+### revoked_tokens
+
+`token_hash VARCHAR(64)` is the primary key and stores a SHA-256 digest, never the bearer token itself. `expires_at TIMESTAMPTZ` is required and indexed. Logout revokes one token; the scheduled task removes expired revocation records.
+
+### job_heartbeats
+
+`name VARCHAR(80)` is the primary key. Required fields `succeeded_at TIMESTAMPTZ` and `processed_count INTEGER` record completion of the close scan, allowing stale-worker detection even when the web process remains alive.
+
+Migration `20261111_0003` establishes hashes for legacy audit rows before adding constraints and mutation guards. Historical authenticity before migration cannot be inferred from that backfill.

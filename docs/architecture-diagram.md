@@ -9,16 +9,18 @@ flowchart TB
     end
 
     subgraph Railway["Railway"]
+      subgraph Demo["Single demo backend container: supervisor; one replica"]
         API[FastAPI Backend]
         Worker[Celery Worker]
         Beat[Celery Beat Scheduler]
+      end
         Postgres[(PostgreSQL Database)]
         Redis[(Redis Broker)]
     end
 
     subgraph BackendModules["Backend Modules"]
         Auth[Auth + RBAC]
-        Controls[Rate + Body Limit Middleware]
+        Controls[Redis rate limits + bounded request body]
         RFQAPI[RFQ REST APIs]
         AuctionService[Auction Domain Service]
         AuditService[Append-only Audit Service]
@@ -30,6 +32,7 @@ flowchart TB
     React -->|HTTPS REST API + Bearer Token| API
 
     API --> Controls
+    Controls --> Redis
     API --> Auth
     API --> RFQAPI
     RFQAPI --> AuctionService
@@ -45,6 +48,8 @@ flowchart TB
     Auth --> Models
     AuctionService --> RFQAPI
 ```
+
+The diagram shows the actual demo deployment. Web and Celery processes share a supervised container because of the hosting plan limit. A child failure ends the container so Railway can restart it. `/ready` checks PostgreSQL; the authenticated operations endpoint checks worker freshness. For production, split the web, worker and single Beat scheduler into independent services.
 
 ## Request Flow
 

@@ -1,11 +1,16 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function BidForm({ auction, user, onSubmit }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const formRef = useRef(null);
+  const pending = useRef(false);
+  useEffect(() => { formRef.current?.reset(); }, [auction.id]);
   const disabled = isSubmitting || auction.status !== "Active" || user.role !== "supplier";
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (pending.current) return;
+    pending.current = true;
     const form = event.currentTarget;
     const data = new FormData(form);
 
@@ -23,12 +28,13 @@ export function BidForm({ auction, user, onSubmit }) {
         form.reset();
       }
     } finally {
+      pending.current = false;
       setIsSubmitting(false);
     }
   }
 
   return (
-    <form className="stacked-form" onSubmit={handleSubmit}>
+    <form ref={formRef} className="stacked-form" onSubmit={handleSubmit}>
       <div className="form-grid">
         <label>
           Carrier

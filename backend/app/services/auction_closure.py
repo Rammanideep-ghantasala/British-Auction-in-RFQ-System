@@ -20,7 +20,7 @@ def _now() -> datetime:
 def _close_reason(auction: RFQAuction, now: datetime) -> tuple[str, datetime]:
     forced_close_at = as_utc(auction.forced_close_at)
     close_at = as_utc(auction.close_at)
-    if now >= forced_close_at or close_at >= forced_close_at:
+    if close_at >= forced_close_at:
         return FORCED_CLOSE, forced_close_at
     return SCHEDULED_CLOSE, close_at
 
@@ -54,7 +54,7 @@ def close_expired_auctions(db: Session, now: datetime | None = None, limit: int 
             log_type="closed",
             message=message,
             at=closed_at,
-            event_metadata={"close_reason": reason, "closed_at": closed_at.isoformat()},
+            event_metadata={"close_reason": reason, "closed_at": closed_at.isoformat(), "processed_at": current_time.isoformat()},
         )
         closed_count += 1
 

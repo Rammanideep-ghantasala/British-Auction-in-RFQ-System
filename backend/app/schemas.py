@@ -74,6 +74,7 @@ class BidRead(BaseModel):
 
 
 class RankedQuoteRead(BaseModel):
+    is_own_quote: bool = False
     carrier_name: str
     freight_charges: Money
     origin_charges: Money
@@ -136,3 +137,8 @@ class AuctionDetail(BaseModel):
     rankings: list[RankedQuoteRead]
     bids: list[BidRead]
     activity_log: list[ActivityLogRead]
+    bids_total: int
+    activity_total: int
+    history_limit: int
+    bids_offset: int
+    activity_offset: int

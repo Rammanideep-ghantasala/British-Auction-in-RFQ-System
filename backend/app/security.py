@@ -16,9 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db import get_db
-from app.models import User, UserRole
+from app.models import User, UserRole, RevokedToken
 
-password_iterations = 120_000
+password_iterations = 600_000
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -55,12 +55,22 @@ def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
         password_salt.encode("utf-8"),
         password_iterations,
     )
-    return digest.hex(), password_salt
+    return f"pbkdf2_sha256${password_iterations}${digest.hex()}", password_salt
 
 
 def verify_password(password: str, password_hash: str, password_salt: str) -> bool:
-    candidate_hash, _ = hash_password(password, password_salt)
-    return hmac.compare_digest(candidate_hash, password_hash)
+    try:
+        if "$" in password_hash:
+            algorithm, rounds, expected = password_hash.split("$")
+            if algorithm != "pbkdf2_sha256" or not 120_000 <= int(rounds) <= 2_000_000:
+                return False
+            iterations = int(rounds)
+        else:
+            iterations, expected = 120_000, password_hash
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), password_salt.encode(), iterations).hex()
+        return hmac.compare_digest(candidate, expected)
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(user: User) -> str:
@@ -70,6 +80,8 @@ def create_access_token(user: User) -> str:
         "email": user.email,
         "role": user.role,
         "exp": expires_at,
+        "ver": user.token_version or 0,
+        "jti": secrets.token_hex(16),
     }
     encoded_payload = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = hmac.new(settings.secret_key.encode("utf-8"), encoded_payload.encode("ascii"), hashlib.sha256).digest()
@@ -92,6 +104,8 @@ def decode_access_token(token: str) -> dict:
         raise ValueError("Invalid bearer token signature.")
 
     payload = json.loads(_base64url_decode(encoded_payload))
+    if not isinstance(payload, dict) or not isinstance(payload.get("sub"), str):
+        raise ValueError("Invalid token payload.")
     if int(payload.get("exp", 0)) <= int(time.time()):
         raise ValueError("Bearer token has expired.")
 
@@ -107,12 +121,14 @@ def get_current_user(
 
     try:
         payload = decode_access_token(credentials.credentials)
-    except (ValueError, json.JSONDecodeError):
+    except (ValueError, TypeError, json.JSONDecodeError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token.") from None
 
     user = db.get(User, payload.get("sub"))
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is inactive or no longer exists.")
+    if payload.get("ver", 0) != user.token_version or db.get(RevokedToken, hashlib.sha256(credentials.credentials.encode()).hexdigest()):
+        raise HTTPException(status_code=401, detail="Session has been revoked. Please sign in again.")
 
     return user
 

@@ -13,6 +13,7 @@ from app.schemas import AuctionCreate, AuctionDetail, AuctionPage, BidCreate
 from app.security import ensure_role, get_current_user
 from app.services.audit import append_activity_log
 from app.services import auction as auction_service
+from app.services.queries import latest_bids, history
 
 router = APIRouter(prefix="/api/rfqs", tags=["rfqs"])
 
@@ -26,8 +27,6 @@ def _load_auction(db: Session, auction_id: str, *, for_update: bool = False) -> 
         select(RFQAuction)
         .where(RFQAuction.id == auction_id)
         .options(
-            selectinload(RFQAuction.bids),
-            selectinload(RFQAuction.activity_logs),
             selectinload(RFQAuction.invitations),
         )
     )
@@ -80,9 +79,10 @@ def _log_read(log: ActivityLog) -> dict:
 
 def _rank_read(rank: auction_service.RankedQuote, viewer: User | None = None) -> dict:
     is_supplier = viewer is not None and viewer.role == UserRole.SUPPLIER.value
-    is_own_quote = is_supplier and rank.carrier_key == auction_service.carrier_key(viewer.company_name)
+    is_own_quote = is_supplier and rank.carrier_key == viewer.id
     if is_supplier and not is_own_quote:
         return {
+            "is_own_quote": False,
             "carrier_name": f"Supplier {rank.rank}",
             "freight_charges": Decimal("0.00"),
             "origin_charges": Decimal("0.00"),
@@ -96,6 +96,7 @@ def _rank_read(rank: auction_service.RankedQuote, viewer: User | None = None) ->
         }
 
     return {
+        "is_own_quote": bool(is_own_quote),
         "carrier_name": rank.carrier_name,
         "freight_charges": rank.freight_charges,
         "origin_charges": rank.origin_charges,
@@ -115,14 +116,13 @@ def _visible_activity_logs(auction: RFQAuction, viewer: User) -> list[ActivityLo
 
     visible_logs: list[ActivityLog] = []
     for log in auction.activity_logs:
-        carrier_name = (log.event_metadata or {}).get("carrier_name")
-        if log.type != "bid" or auction_service.carrier_key(str(carrier_name)) == auction_service.carrier_key(viewer.company_name):
+        if log.type != "bid" or log.actor_user_id == viewer.id:
             visible_logs.append(log)
     return visible_logs
 
 
-def _auction_summary(auction: RFQAuction, now: datetime) -> dict:
-    rankings = auction_service.current_rankings(auction.bids)
+def _auction_summary(auction: RFQAuction, now: datetime, bids: list[Bid]) -> dict:
+    rankings = auction_service.current_rankings(bids)
 
     return {
         "id": auction.id,
@@ -135,11 +135,12 @@ def _auction_summary(auction: RFQAuction, now: datetime) -> dict:
     }
 
 
-def _auction_detail(auction: RFQAuction, now: datetime, viewer: User) -> dict:
-    rankings = auction_service.current_rankings(auction.bids)
-    visible_bids = list(auction.bids)
-    if viewer.role == UserRole.SUPPLIER.value:
-        visible_bids = [bid for bid in visible_bids if bid.supplier_user_id == viewer.id]
+def _auction_detail(auction: RFQAuction, now: datetime, viewer: User, db: Session,
+                    history_limit: int = 25, bids_offset: int = 0, activity_offset: int = 0) -> dict:
+    rankings = auction_service.current_rankings(latest_bids(db, [auction.id]))
+    visible_bids, logs, bids_total, activity_total = history(
+        db, auction.id, viewer, history_limit, bids_offset, activity_offset,
+    )
 
     return {
         "id": auction.id,
@@ -161,7 +162,9 @@ def _auction_detail(auction: RFQAuction, now: datetime, viewer: User) -> dict:
         "invited_supplier_ids": [invitation.supplier_user_id for invitation in auction.invitations],
         "rankings": [_rank_read(rank, viewer) for rank in rankings],
         "bids": [_bid_read(bid) for bid in sorted(visible_bids, key=auction_service.quote_total)],
-        "activity_log": [_log_read(log) for log in reversed(_visible_activity_logs(auction, viewer))],
+        "activity_log": [_log_read(log) for log in logs],
+        "bids_total": bids_total, "activity_total": activity_total,
+        "history_limit": history_limit, "bids_offset": bids_offset, "activity_offset": activity_offset,
     }
 
 
@@ -208,14 +211,16 @@ def list_auctions(
     base_statement = _auction_list_statement(current_user)
     total = db.scalar(select(func.count()).select_from(base_statement.subquery())) or 0
     auctions = db.scalars(
-        base_statement.options(selectinload(RFQAuction.bids))
-        .order_by(RFQAuction.created_at.desc())
+        base_statement.order_by(RFQAuction.created_at.desc(), RFQAuction.id)
         .offset(offset)
         .limit(limit)
     ).all()
     now = _now()
+    grouped = {auction.id: [] for auction in auctions}
+    for bid in latest_bids(db, list(grouped)):
+        grouped[bid.auction_id].append(bid)
     return {
-        "items": [_auction_summary(auction, now) for auction in auctions],
+        "items": [_auction_summary(auction, now, grouped[auction.id]) for auction in auctions],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -256,6 +261,8 @@ def create_auction(
     )
     if errors:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=errors)
+    if len(auction_service.normalize_reference(payload.reference_id)) > 80:
+        raise HTTPException(status_code=422, detail="Normalized reference ID cannot exceed 80 characters.")
 
     suppliers = _invited_suppliers(db, payload.supplier_ids)
     auction = RFQAuction(
@@ -293,18 +300,21 @@ def create_auction(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=["Reference ID must be unique."]) from None
 
     db.expire_all()
-    return _auction_detail(_load_auction(db, auction.id), _now(), current_user)
+    return _auction_detail(_load_auction(db, auction.id), _now(), current_user, db)
 
 
 @router.get("/{auction_id}", response_model=AuctionDetail)
 def get_auction(
     auction_id: str,
+    history_limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    bids_offset: Annotated[int, Query(ge=0)] = 0,
+    activity_offset: Annotated[int, Query(ge=0)] = 0,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     auction = _load_auction(db, auction_id)
     _ensure_can_view(current_user, auction)
-    return _auction_detail(auction, _now(), current_user)
+    return _auction_detail(auction, _now(), current_user, db, history_limit, bids_offset, activity_offset)
 
 
 @router.post("/{auction_id}/bids", response_model=AuctionDetail, status_code=status.HTTP_201_CREATED)
@@ -328,6 +338,7 @@ def submit_bid(
 
     submitted_at = auction_service.as_utc(_now())
     candidate = auction_service.BidCandidate(
+        supplier_user_id=current_user.id,
         carrier_name=supplier_carrier_name,
         freight_charges=auction_service.money(payload.freight_charges),
         origin_charges=auction_service.money(payload.origin_charges),
@@ -336,7 +347,7 @@ def submit_bid(
         validity=payload.validity.strip(),
         submitted_at=submitted_at,
     )
-    decision = auction_service.evaluate_bid(auction, auction.bids, candidate)
+    decision = auction_service.evaluate_bid(auction, latest_bids(db, [auction.id]), candidate)
 
     if decision.errors:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=decision.errors)
@@ -359,7 +370,7 @@ def submit_bid(
         log_type="bid",
         message=f"{candidate.carrier_name} submitted a quote totaling {auction_service.quote_total(candidate):.2f}.",
         at=submitted_at,
-        event_metadata={"carrier_name": candidate.carrier_name, "total": str(auction_service.quote_total(candidate))},
+        event_metadata={"supplier_user_id": current_user.id, "carrier_name": candidate.carrier_name, "total": str(auction_service.quote_total(candidate))},
         actor_user_id=current_user.id,
     )
 
@@ -388,4 +399,4 @@ def submit_bid(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bid could not be saved. Please retry.") from None
 
     db.expire_all()
-    return _auction_detail(_load_auction(db, auction.id), _now(), current_user)
+    return _auction_detail(_load_auction(db, auction.id), _now(), current_user, db)

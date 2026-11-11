@@ -1,13 +1,19 @@
 import { addMinutes, fromDateTimeLocal, toDateTimeLocal } from "../formatters";
+import { useRef, useState } from "react";
 
 export function RfqCreateForm({ suppliers, onCancel, onSubmit }) {
   const now = new Date();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const pending = useRef(false);
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
+    if (pending.current) return;
+    pending.current = true;
+    setIsSubmitting(true);
     const data = new FormData(event.currentTarget);
 
-    onSubmit({
+    try { await onSubmit({
       name: data.get("name"),
       reference_id: data.get("reference_id"),
       british_auction_enabled: data.get("british_auction_enabled") === "on",
@@ -21,7 +27,7 @@ export function RfqCreateForm({ suppliers, onCancel, onSubmit }) {
         extension_minutes: Number(data.get("extension_minutes")),
         trigger_type: data.get("trigger_type")
       }
-    });
+    }); } finally { pending.current = false; setIsSubmitting(false); }
   }
 
   return (
@@ -122,8 +128,8 @@ export function RfqCreateForm({ suppliers, onCancel, onSubmit }) {
           <button className="secondary-button" type="button" onClick={onCancel}>
             Cancel
           </button>
-          <button className="primary-button" type="submit">
-            Create RFQ
+          <button className="primary-button" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Creating" : "Create RFQ"}
           </button>
         </div>
       </form>
