@@ -1,5 +1,7 @@
 # Security and reliability release — 11 November 2026
 
+Historical release record. Hosting descriptions below reflect 11 November; the demo was taken offline on 21 November 2026. See [current deployment status](deployment-status.md).
+
 This release addresses the confirmed defects in the [original review](architecture-security-review-2026-11-10.md). The architecture remains a modular FastAPI application with PostgreSQL, Redis/Celery and a React client.
 
 | Original failure | Implemented correction |

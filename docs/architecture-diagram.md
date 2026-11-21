@@ -1,110 +1,109 @@
-# Architecture Diagram
+# Architecture and Request Flow
+
+The hosted demo was retired on **21 November 2026**. These diagrams describe the current local setup. See the [README](../README.md) for commands and the [deployment record](deployment-status.md) for hosting status.
+
+## Component diagram
 
 ```mermaid
-flowchart TB
-    Recruiter[Reviewer / User Browser]
-
-    subgraph Vercel["Vercel"]
-        React[React + Vite Frontend]
+flowchart LR
+    User["Buyer / supplier"] --> Frontend["React + Vite<br/>localhost:5173"]
+    subgraph Compose["Docker Compose"]
+        API["FastAPI<br/>localhost:8000"]
+        Auth["Authentication and access policies"]
+        Domain["Auction rules"]
+        ReadModel["Latest quotes and paginated history"]
+        Audit["Audit append service"]
+        DB[("PostgreSQL")]
+        Redis[("Redis")]
+        Beat["Celery Beat<br/>one scheduler"]
+        Worker["Celery worker"]
+        Close["Closure service"]
+        API --> Auth
+        Auth --> DB
+        API --> Domain
+        API --> ReadModel
+        ReadModel --> DB
+        API --> Audit
+        Audit --> DB
+        API -->|"Rate limits"| Redis
+        Beat -->|"Scheduled task"| Redis
+        Redis --> Worker
+        Worker --> Close
+        Close --> DB
+        Close --> Audit
+        Worker -->|"Heartbeat"| DB
     end
-
-    subgraph Railway["Railway"]
-      subgraph Demo["Single demo backend container: supervisor; one replica"]
-        API[FastAPI Backend]
-        Worker[Celery Worker]
-        Beat[Celery Beat Scheduler]
-      end
-        Postgres[(PostgreSQL Database)]
-        Redis[(Redis Broker)]
-    end
-
-    subgraph BackendModules["Backend Modules"]
-        Auth[Auth + RBAC]
-        Controls[Redis rate limits + bounded request body]
-        RFQAPI[RFQ REST APIs]
-        AuctionService[Auction Domain Service]
-        AuditService[Append-only Audit Service]
-        CloseService[Auction Close Service]
-        Models[SQLAlchemy Models]
-    end
-
-    Recruiter -->|HTTPS| React
-    React -->|HTTPS REST API + Bearer Token| API
-
-    API --> Controls
-    Controls --> Redis
-    API --> Auth
-    API --> RFQAPI
-    RFQAPI --> AuctionService
-    RFQAPI --> AuditService
-    RFQAPI --> Models
-    Models --> Postgres
-
-    Beat --> Redis
-    Redis --> Worker
-    Worker --> CloseService
-    CloseService --> AuditService
-    CloseService --> Models
-    Auth --> Models
-    AuctionService --> RFQAPI
+    Frontend -->|"HTTP JSON + bearer token"| API
 ```
 
-The diagram shows the actual demo deployment. Web and Celery processes share a supervised container because of the hosting plan limit. A child failure ends the container so Railway can restart it. `/ready` checks PostgreSQL; the authenticated operations endpoint checks worker freshness. For production, split the web, worker and single Beat scheduler into independent services.
+The backend boxes are modules in one Python application, not separately deployed microservices. Route handlers coordinate transactions; the auction service calculates rules without owning HTTP or database connections.
 
-## Request Flow
+## Bid transaction
 
 ```mermaid
 sequenceDiagram
-    actor Buyer
     actor Supplier
-    participant Frontend as React Frontend
-    participant API as FastAPI Backend
-    participant Service as Auction Service
-    participant Audit as Audit Service
-    participant Worker as Celery Worker
+    participant UI as React
+    participant API as FastAPI
     participant DB as PostgreSQL
+    participant Rules as Auction service
+    participant Audit as Audit service
 
-    Buyer->>Frontend: Sign in
-    Frontend->>API: POST /api/auth/login
-    API->>DB: Verify user credentials
-    API-->>Frontend: Bearer token
-
-    Buyer->>Frontend: Create RFQ
-    Frontend->>API: POST /api/rfqs
-    API->>Service: Validate auction window/config
-    API->>DB: Store RFQ + invitations
-    API->>Audit: Append created event
-    Audit->>DB: Store hash-chained activity log
-    API-->>Frontend: RFQ details
-
-    Supplier->>Frontend: Sign in and open invited RFQ
-    Frontend->>API: GET /api/rfqs/{id}
-    API->>DB: Verify invitation
-    API-->>Frontend: RFQ details with masked competitor data
-
-    Supplier->>Frontend: Submit quote
-    Frontend->>API: POST /api/rfqs/{id}/bids
-    API->>Service: Validate bid, rank, apply extension rules
-    API->>DB: Store bid + extension changes
-    API->>Audit: Append bid/extension events
-    API-->>Frontend: Updated RFQ details
-
-    Worker->>DB: Find expired unclosed auctions
-    Worker->>DB: Persist closed_at + close_reason
-    Worker->>Audit: Append closed event
+    Supplier->>UI: Submit quote for selected RFQ
+    UI->>API: POST /api/rfqs/{id}/bids + token
+    API->>DB: Resolve active user and session
+    API->>DB: Lock auction row FOR UPDATE
+    API->>API: Verify role, invitation and server time
+    API->>DB: Read latest supplier quotes
+    API->>Rules: Validate quote and compare rankings
+    Rules-->>API: Accept/reject and extension decision
+    alt Bid accepted
+        API->>DB: Add bid and update deadline
+        API->>Audit: Append bid / extension events
+        Audit->>DB: Serialize sequence and add hash-chain entries
+        API->>DB: Commit
+        API-->>UI: Role-filtered detail and history page
+    else Bid rejected
+        API-->>UI: Validation / authorization error
+        UI->>UI: Retain draft for this RFQ
+    end
 ```
 
-## Component Responsibilities
+Acquiring the row lock before reading the current bidding state ensures that concurrent requests evaluate the preceding committed extension. A failed transaction rolls back its writes. Monetary values use Decimal/Numeric instead of binary floating-point arithmetic.
 
-| Component | Responsibility |
+## Scheduled closure
+
+```mermaid
+sequenceDiagram
+    participant Beat as Celery Beat
+    participant Redis
+    participant Worker as Celery worker
+    participant DB as PostgreSQL
+
+    Beat->>Redis: Enqueue close scan every configured interval
+    Redis->>Worker: Deliver task
+    Worker->>DB: Select expired, unclosed auctions with row locks
+    Worker->>DB: Persist effective close reason and append event
+    Note over Worker,DB: Repeated or competing scans do not add a second close event
+    Worker->>DB: Record successful scan heartbeat
+```
+
+Each run processes up to 50 batches of 100 auctions. Request-time deadline validation remains authoritative even if the worker is delayed. A stale or missing heartbeat produces 503 from the buyer-only operations endpoint.
+
+## Boundaries and recovery
+
+| Concern | Design |
 | --- | --- |
-| React Frontend | User interaction, forms, RFQ listing, details, ranking display |
-| FastAPI Backend | API routing, validation, auth, RBAC, persistence, request safeguards |
-| Auction Service | Business rules for ranking, rebids, status, and extension logic |
-| Audit Service | Append-only activity logging with sequence and hash-chain verification |
-| Celery Worker + Beat | Scheduled auction close transitions |
-| PostgreSQL | Durable storage for users, RFQs, invitations, bids, and logs |
-| Redis | Broker/result backend for Celery jobs |
-| GitHub Actions | Migration check, backend tests, frontend build |
-| Railway | Backend and database hosting |
-| Vercel | Frontend hosting |
+| Supplier isolation | Account IDs, invitations and buyer ownership are checked on the backend. |
+| Read growth | SQL window query selects latest supplier quotes; bid/activity histories are paginated. |
+| Browser races | Session generations, cancellation and request ordering prevent stale writes; drafts are keyed by RFQ. |
+| Database recovery | Connection pre-ping, timeouts and serialized migrations; readiness checks the database. |
+| Request protection | Redis counters with TTLs; body size/time bounds; explicit trusted proxy ranges. |
+| Audit history | Hash chaining plus database mutation guards; privileged administrators remain outside this trust boundary. |
+| Process recovery | Compose separates API/worker/Beat. Optional combined supervisor mode exits if a web or worker child dies. |
+
+## Historical hosted topology
+
+The retired Vercel frontend called a Railway API. Railway also held PostgreSQL and Redis. Due to the demo plan's service limit, the API container supervised the web process and a combined Celery worker/Beat process with one replica. That arrangement must not be scaled to multiple web replicas while each replica starts a scheduler.
+
+The local Compose setup uses separate services and exactly one Beat scheduler. GitHub Actions runs verification only; it has no deployment step.

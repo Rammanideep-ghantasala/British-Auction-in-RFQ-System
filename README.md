@@ -1,370 +1,350 @@
 # British Auction RFQ System
 
-Full-stack RFQ application for British Auction-style bidding. The project is structured for the Full Stack Intern role requirements: FastAPI backend, React frontend, PostgreSQL-ready persistence, REST APIs, and test coverage for the auction rules.
+[![CI](https://github.com/Rammanideep-ghantasala/British-Auction-in-RFQ-System/actions/workflows/ci.yml/badge.svg)](https://github.com/Rammanideep-ghantasala/British-Auction-in-RFQ-System/actions/workflows/ci.yml)
 
-## Live Demo
+A full-stack freight procurement application where buyers create requests for quotation (RFQs), invite suppliers, and compare competing quotes. Suppliers lower their bids, rankings update, and qualifying late bids extend the auction without crossing a fixed deadline.
 
-Frontend:
+Built as a recruitment assignment using **FastAPI, React, PostgreSQL, Redis, and Celery**. The implementation follows the British Auction rules in the assignment and includes authentication, transactional bidding, scheduled closure, and regression tests.
 
-```text
-https://frontend-one-jade-ojg8dffinq.vercel.app
-```
+> **Project status — 21 November 2026:** Maintained as a GitHub portfolio project that runs locally. The former Vercel and Railway demo has been taken offline. No cloud account or API key is needed for the local setup.
 
-Backend health:
+[Quick start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [Auction rules](#auction-rules) · [Edge cases](#edge-cases-handled) · [Tests](#testing-and-ci) · [Security](#security-and-access-control)
 
-```text
-https://british-auction-rfq-system-production.up.railway.app/health
-```
+## Deliverables at a glance
 
-Current deployed backend setup:
-
-- Railway backend service: FastAPI, Alembic migrations, and supervised in-container Celery runner
-- Railway PostgreSQL service: production database
-- Railway Redis service: Celery broker/result backend
-- Vercel frontend service: React/Vite UI connected to the Railway API
-
-For the live recruiter demo, `RUN_CELERY_IN_WEB=true` is enabled because Railway's free resource limit blocked separate Celery Worker and Celery Beat services. The scheduled auction close job runs every 60 seconds through Celery Beat inside the backend container. A supervisor terminates the container if the web or worker process exits, allowing Railway to restart it. Keep this deployment at one replica to avoid multiple schedulers. For production, upgrade Railway and split the worker and beat into separate services.
-
-## Assignment Deliverables
-
-| Deliverable | Location |
+| Deliverable | Where to review |
 | --- | --- |
-| Simple HLD | [docs/HLD.md](docs/HLD.md) |
-| Architecture Diagram | [docs/architecture-diagram.md](docs/architecture-diagram.md) |
-| Database Schema Design | [docs/database-schema.md](docs/database-schema.md) |
-| Backend Code | [backend/](backend/) |
-| Frontend Code | [frontend/](frontend/) |
+| High-level design | [HLD](docs/HLD.md) |
+| Architecture and request sequence | [Architecture diagrams](docs/architecture-diagram.md) |
+| Database tables, constraints and ER diagram | [Schema design](docs/database-schema.md) |
+| FastAPI backend | [Application](backend/app/) · [Migrations](backend/migrations/) |
+| React frontend | [Frontend source](frontend/src/) |
+| Regression and integration tests | [Backend tests](backend/tests/) · [Frontend reliability tests](frontend/src/reliability.test.jsx) |
+| Previous review and fixes | [Hardening release](docs/hardening-release-2026-11-11.md) |
+| Hosting retirement record | [Deployment status](docs/deployment-status.md) |
 
-## Tech Stack
+## Features
 
-- Backend: Python, FastAPI, SQLAlchemy 2, Pydantic, Alembic
-- Database: PostgreSQL in production, SQLite fallback for local development/tests
-- Async jobs: Celery with Redis broker for scheduled auction close transitions
-- Frontend: React + Vite
-- Testing: pytest for backend domain and API route behavior
-- CI/CD: GitHub Actions for migrations, backend tests, and frontend builds
-- Deployment target: Railway for backend/PostgreSQL, Vercel for frontend
+| Area | Implemented behavior |
+| --- | --- |
+| Buyer workspace | Create RFQs, set bidding dates, configure extension rules, invite active suppliers, and review rankings, every submitted bid, and activity history. |
+| Supplier workspace | View invited RFQs, submit freight/origin/destination charges, transit time and quote validity, and improve an existing quote. |
+| Auction engine | Rank current supplier quotes as L1, L2, L3; support three extension triggers; enforce the forced-close deadline. |
+| Access control | Authenticate buyers and suppliers; enforce ownership, roles and invitations on the server; mask competitor identities and charge breakdowns for suppliers. |
+| History and integrity | Preserve bid history and sequence/hash-chained activity logs with database mutation guards. Paginate listing, bid and activity views. |
+| Background processing | Use Celery Beat and Redis to schedule close scans; persist closure once and expose job freshness. |
+| Frontend reliability | Start with empty login fields, autofill demo credentials on request, refresh visible pages every 15 seconds, isolate bid drafts per RFQ, and reject stale responses. |
+| Operations | Provide migrations, readiness checks, operator account commands, dependency locks, Docker Compose and GitHub Actions checks. |
 
-## Project Structure
+## Architecture
 
-```text
-backend/
-  app/
-    api/              FastAPI route handlers
-    core/             environment/config handling
-    services/         auction, audit, and close-transition services
-    db.py             SQLAlchemy session setup
-    models.py         database models
-    schemas.py        request/response schemas
-  migrations/         Alembic migrations
-  tests/              backend tests
-frontend/
-  src/
-    components/       React UI components
-    api.js            API client
-    formatters.js     display/date helpers
-docker-compose.yml    PostgreSQL + Redis + API + Celery worker/beat local stack
-.github/workflows/    CI migration, test, and build checks
-docs/                 HLD, architecture diagram, and schema design
+The backend is a **modular monolith**: HTTP routes coordinate transactions, domain services evaluate auction rules, and SQLAlchemy handles persistence. Celery reuses the same closure and audit services. This keeps bid acceptance, deadline changes and audit writes inside one database transaction without introducing distributed transactions.
+
+The diagram shows the recommended local Docker Compose setup; the React development server runs separately.
+
+```mermaid
+flowchart TB
+    Browser["Buyer / supplier browser"] --> UI["React + Vite"]
+    UI -->|"REST + signed bearer token"| API["FastAPI routes"]
+    API --> Guard["Request limits, authentication and authorization"]
+    Guard --> Rules["Auction rules and response visibility"]
+    Rules --> Queries["SQLAlchemy queries and transactions"]
+    Rules --> Audit["Audit append service"]
+    Queries --> DB[("PostgreSQL")]
+    Audit --> DB
+    Guard -->|"Shared rate counters"| Redis[("Redis")]
+    Beat["Celery Beat: one scheduler"] -->|"Enqueue close scan"| Redis
+    Redis --> Worker["Celery worker"]
+    Worker --> Closure["Closure service"]
+    Closure --> DB
+    Closure --> Audit
+    Worker -->|"Job heartbeat"| DB
 ```
 
-## Requirements Covered
+| Layer | Technology | Why it is used |
+| --- | --- | --- |
+| Frontend | React 19, Vite, JavaScript | Forms, role-aware views, request cancellation and client state. |
+| API and validation | Python 3.12, FastAPI, Pydantic | Typed request/response models and interactive API documentation. |
+| Persistence | SQLAlchemy 2, PostgreSQL, Alembic | Decimal money, constraints, row locks and versioned schema changes. |
+| Background jobs | Celery, Redis | Periodic closure tasks and shared rate-limit counters. |
+| Testing | pytest, HTTP test client, Vitest, Testing Library | Domain, HTTP, database concurrency and browser-state regressions. |
+| Delivery checks | GitHub Actions, Docker | Repeatable migrations, tests, dependency audits and builds. |
 
-- Create RFQs with British Auction enabled
-- Capture bid start, bid close, forced bid close, and pickup/service dates
-- Configure trigger window X, extension duration Y, and extension trigger type
-- Submit supplier quote details: carrier, freight/origin/destination charges, transit time, validity
-- Rank suppliers by total quote as L1, L2, L3
-- Extend auction time for:
-  - bid received in last X minutes
-  - any supplier rank change in last X minutes
-  - L1 rank change in last X minutes
-- Never extend beyond forced bid close time
-- Reject duplicate RFQ reference IDs
-- Reject RFQs without at least one invited active supplier
-- Reject pickup/service dates that are not after forced bid close
-- Reject supplier rebids that do not lower their current quote
-- Record activity logs for RFQ creation, bid submissions, and time extensions
-- Preserve append-only activity logs with sequence numbers and hash-chain verification
-- Close expired auctions through a scheduled Celery task
-- Apply API rate limiting and request body size limits
-- Expose listing and details views through React
-- Authenticate buyers and suppliers with signed bearer tokens
-- Restrict RFQ creation to buyers and bidding to invited suppliers
-- Mask competitor quote details from supplier users
-- Paginate RFQ listing responses
-- Provide frontend pagination controls for RFQ listings
-- Store money using fixed-precision Decimal/Numeric values
+### What happens when a supplier bids?
 
-## Reviewer Demo Accounts
+1. The API authenticates the supplier and locks the RFQ row using PostgreSQL `SELECT ... FOR UPDATE`.
+2. It verifies the invitation and checks the auction deadline using a server-generated submission timestamp.
+3. It loads each supplier's latest quote and validates that the new total is lower than this supplier's current total.
+4. The auction service computes rankings and decides whether the configured extension applies.
+5. The bid, updated deadline and audit entries commit together. Any failed transaction rolls back its writes.
+6. The API returns a view filtered for the requesting user.
 
-The deployed demo uses these reviewer accounts:
+Concurrent bids for the same RFQ therefore evaluate the deadline in sequence. SQLite is available for lightweight development, but the PostgreSQL tests verify the locking behavior.
 
-```text
-Buyer:
-buyer@gocomet.test / RfqReview9WJ4xM72QpZ6L
+### Database model
 
-Supplier:
-apex@carrier.test / RfqReview9WJ4xM72QpZ6L
+| Table | Purpose and key constraints |
+| --- | --- |
+| `users` | Buyer/supplier identity, unique email, salted password hash, active flag and token version. |
+| `rfq_auctions` | Buyer ownership, unique normalized reference, schedule, extension configuration and persisted closure. |
+| `auction_invitations` | Supplier access; unique auction/supplier pair. |
+| `bids` | Supplier account ID, quote components stored as `NUMERIC(12,2)`, and server timestamp. |
+| `activity_logs` | Per-auction sequence, previous/current hash, event metadata and actor; unique auction/sequence pair. |
+| `revoked_tokens` | SHA-256 digest and expiry of a revoked session token. |
+| `job_heartbeats` | Most recent successful close scan and processed count. |
 
-Supplier:
-swift@carrier.test / RfqReview9WJ4xM72QpZ6L
+See the [full schema and ER diagram](docs/database-schema.md). Company names are display values; supplier account IDs determine ownership and ranking identity.
+
+## Auction rules
+
+- Quote total is **freight + origin + destination charges**. Components may be zero; the total must be positive.
+- Ranking uses the latest accepted quote from each supplier account. Lowest total wins L1; equal totals use submission time, then company name and supplier ID as deterministic tie-breakers.
+- A supplier's next quote must be strictly lower than its own current quote.
+- Bidding is accepted from the start time, inclusive, until the current close time, exclusive.
+- RFQ creation requires `start < close < forced close < pickup/service`.
+- A qualifying bid inside the final **X minutes**, including the window boundary, extends the **current** close by **Y minutes**.
+- The resulting deadline is `min(current close + Y, forced close)`.
+
+| Extension trigger | When it applies inside the trigger window |
+| --- | --- |
+| `bid-received` | Any valid new bid. |
+| `any-rank-change` | A supplier enters the ranking or any supplier's rank changes. |
+| `l1-rank-change` | The leading supplier changes. Establishing the first L1 does not count as replacing a leader. |
+
+**Example:** With close at 10:00, forced close at 10:08, X = 10 minutes and Y = 5 minutes, a qualifying bid at 09:55 moves close to 10:05. Another qualifying bid at 10:04 moves it to 10:08. A bid at 10:08 is rejected.
+
+A delayed worker does not reopen bidding: the API checks the effective deadline during submission. The worker records the deadline's closure reason separately from when processing occurs.
+
+## Quick start
+
+**Prerequisites:** Git, Docker with Compose v2, Node.js 22 and pnpm. Python 3.12 is needed for the optional direct-backend setup and backend tests.
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/Rammanideep-ghantasala/British-Auction-in-RFQ-System.git
+cd British-Auction-in-RFQ-System
 ```
 
-On the sign-in screen, demo account buttons fill both email and password for quick prototype review. The reviewer still clicks **Sign In** manually.
+### 2. Start the API, database and background jobs
 
-For local development, `backend/.env.example` uses `DEMO_USER_PASSWORD=password123`.
+```bash
+docker compose up --build -d
+docker compose ps
+```
 
-Before real production use, set `SEED_DEMO_USERS=false` and explicitly deactivate existing demo accounts with `python -m app.manage_users deactivate-demo`. The seeding flag only controls creation; changing `DEMO_USER_PASSWORD` does not change existing passwords. Use the operator commands below to provision accounts or reset a password.
+Compose starts PostgreSQL, Redis, FastAPI, a Celery worker and one Beat scheduler. The API applies migrations before starting; workers wait for API readiness. PostgreSQL and Redis ports bind to localhost.
 
-## Run Locally
+### 3. Start the frontend in another terminal
 
-### Backend
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm run dev
+```
+
+| Local service | Address |
+| --- | --- |
+| Application | [localhost:5173](http://localhost:5173) |
+| Interactive API docs | [localhost:8000/docs](http://localhost:8000/docs) |
+| Database readiness | [localhost:8000/ready](http://localhost:8000/ready) |
+
+### 4. Try the reviewer workflow
+
+All **fresh local demo accounts** use `password123`:
+
+| Role | Email |
+| --- | --- |
+| Buyer — GoComet | `buyer@gocomet.test` |
+| Supplier — Apex Roadways | `apex@carrier.test` |
+| Supplier — Swift Freight | `swift@carrier.test` |
+
+1. Select the buyer demo account, then click **Sign In**. The form is empty until you select an account or type.
+2. Create an RFQ with a unique reference, a currently active bidding window, later forced-close/pickup times, and both suppliers invited.
+3. Sign out and sign in as a supplier. Open the RFQ and submit a quote.
+4. Switch supplier accounts to compete, then return to the buyer to inspect rankings, bid history and activity.
+5. To see an extension, place a valid bid within X minutes of close under a matching trigger.
+
+Only demo users are seeded; a fresh database starts without auctions. These accounts and passwords are for local evaluation.
+
+### Stop your local stack
+
+```bash
+docker compose stop
+```
+
+This stops the containers and retains the PostgreSQL volume. Restart with `docker compose start`.
+
+<details>
+<summary><strong>Optional: run the backend directly with SQLite</strong></summary>
+
+This route supports API/UI exploration without Docker. Scheduled closure persistence requires a running Redis/Celery setup; use Compose to review the complete system.
+
+From the repository root:
+
+**macOS / Linux**
 
 ```bash
 cd backend
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
-pip install --require-hashes -r requirements-dev.txt
+python -m pip install --require-hashes -r requirements-dev.txt
 python -m app.migrate
-uvicorn app.main:app --reload --no-proxy-headers
+python -m uvicorn app.main:app --reload --no-proxy-headers
 ```
 
-On Windows PowerShell:
+**Windows PowerShell**
 
 ```powershell
 cd backend
-python -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install --require-hashes -r requirements-dev.txt
+python -m pip install --require-hashes -r requirements-dev.txt
 python -m app.migrate
-uvicorn app.main:app --reload --no-proxy-headers
+python -m uvicorn app.main:app --reload --no-proxy-headers
 ```
 
-The API runs at `http://localhost:8000`.
+With no environment overrides, the backend uses `backend/dev.db`, local CORS origins and demo users. It reads process environment variables; it does **not** automatically load `backend/.env`. The example file is a reference for exported variables or a container environment file.
 
-Interactive docs:
+</details>
 
-```text
-http://localhost:8000/docs
-```
+## Edge cases handled
 
-### Frontend
+These are implemented behaviors with targeted regression tests. They are not a claim that every possible failure has been eliminated.
 
-```bash
-cd frontend
-pnpm install --frozen-lockfile
-pnpm run dev
-```
+| Scenario | Expected behavior | Evidence |
+| --- | --- | --- |
+| Bid before start, exactly at close, or after forced close | Rejected; start itself is inclusive. | [Boundary tests](backend/tests/test_boundaries.py) |
+| Bid exactly X minutes before close | Eligible for extension when its trigger matches. | [Boundary tests](backend/tests/test_boundaries.py) |
+| Extension would exceed the forced deadline | Capped at forced close. | [Auction tests](backend/tests/test_auction_service.py) |
+| Lower rebid leaves ranks unchanged | No extension under a rank-change trigger. | [Boundary tests](backend/tests/test_boundaries.py) |
+| Equal prices, names or timestamps | Deterministic ordering; separate supplier IDs remain separate quotes. | [Boundary tests](backend/tests/test_boundaries.py) |
+| Two suppliers share the same company name | No merged ranking, rebid confusion or access to the other account's charge breakdown. | [HTTP regressions](backend/tests/test_http_regressions.py) |
+| Identical concurrent bids from one supplier | One accepted; the others fail the lower-rebid rule. | [PostgreSQL concurrency tests](backend/tests/test_postgres.py) |
+| Concurrent valid bids from different suppliers | Both accepted extensions are retained; audit chain remains valid. | [PostgreSQL concurrency tests](backend/tests/test_postgres.py) |
+| Two workers close the same expired RFQ | One persisted close event. | [PostgreSQL concurrency tests](backend/tests/test_postgres.py) |
+| Close task runs after both deadlines | Preserves the effective scheduled/forced close reason. | [HTTP regressions](backend/tests/test_http_regressions.py) |
+| Negative, non-finite or over-precision charges | Validation rejects the request. | [HTTP regressions](backend/tests/test_http_regressions.py) |
+| Duplicate reference, missing invitations or invalid pickup date | RFQ creation rejected; database uniqueness backs up reference validation. | [API tests](backend/tests/test_api.py) |
+| Uninvited supplier or another buyer requests an RFQ | Access denied; supplier lists contain only invited auctions. | [HTTP regressions](backend/tests/test_http_regressions.py) |
+| Client forges a carrier name or bid timestamp | Carrier is checked against identity; client-owned timestamps are rejected. | [API tests](backend/tests/test_api.py) |
+| Logout while an earlier request is pending | Late response cannot restore the session; the logged-out token is revoked server-side. | [Frontend tests](frontend/src/reliability.test.jsx) · [HTTP tests](backend/tests/test_http_regressions.py) |
+| Switch RFQs while typing or awaiting a response | Drafts stay scoped to an RFQ; stale responses cannot replace the selection. | [Frontend tests](frontend/src/reliability.test.jsx) |
+| Corrupt saved session or structured validation error | Recover to login or render a readable message. | [Frontend tests](frontend/src/reliability.test.jsx) |
+| Quote submission fails | Keep the current RFQ's entered values for correction/retry. | [UI behavior tests](frontend/src/components/ui-behavior.test.jsx) |
+| Forged forwarded IP or another API instance | Only configured proxies are trusted; Redis shares limits between instances. | [HTTP tests](backend/tests/test_http_regressions.py) · [Redis tests](backend/tests/test_redis.py) |
+| Oversized streamed body, rate limit or Redis outage | Return 413, 429 or fail-closed 503, with CORS-readable errors. | [HTTP regressions](backend/tests/test_http_regressions.py) |
+| Bulk audit edit, tail deletion or PostgreSQL truncation | Database guards reject the mutation. | [HTTP tests](backend/tests/test_http_regressions.py) · [PostgreSQL tests](backend/tests/test_postgres.py) |
+| Legacy password hash or audit schema | Upgrade password hash on login; migrate legacy logs and check model/schema consistency. | [HTTP tests](backend/tests/test_http_regressions.py) · [Migration tests](backend/tests/test_postgres.py) |
+| Missing/stale close-job heartbeat | Buyer operations endpoint returns 503. | [HTTP regressions](backend/tests/test_http_regressions.py) |
 
-The frontend runs at `http://localhost:5173`.
+## Testing and CI
 
-If the backend URL changes, create `frontend/.env`:
+The [11 November hardening release](docs/hardening-release-2026-11-11.md) recorded **79 backend tests + 13 frontend tests passing**, including PostgreSQL/Redis integration tests. This is a test count, not a coverage percentage. The CI badge above links to the latest run.
 
-```text
-VITE_API_URL=http://localhost:8000
-```
-
-## Run With PostgreSQL
-
-```bash
-docker compose up --build
-```
-
-This starts PostgreSQL, Redis, the FastAPI API, a Celery worker, and Celery Beat for scheduled close checks.
-
-Then run the frontend separately:
-
-```bash
-cd frontend
-pnpm install --frozen-lockfile
-pnpm run dev
-```
-
-## Tests
+With backend development dependencies installed in an activated Python environment, run from the repository root:
 
 ```bash
 python -m pytest backend/tests
-cd frontend
-pnpm run test
-pnpm run build
+pnpm --dir frontend run test
+pnpm --dir frontend run build
 ```
 
-Current backend coverage includes:
+Without `TEST_DATABASE_URL` and `TEST_REDIS_URL`, five infrastructure integration tests are explicitly skipped.
 
-- auction lifecycle statuses
-- extension trigger behavior
-- forced-close caps
-- ranking by total quote
-- buyer/supplier authentication
-- role-based access controls
-- invited supplier visibility rules
-- supplier carrier-name spoofing rejection
-- client-submitted bid timestamp rejection
-- supplier masking for competitor bid details
-- Decimal money precision
-- listing pagination behavior
-- RFQ supplier invitation validation
-- pickup/service date validation
-- duplicate reference rejection
-- non-lowering supplier rebid rejection
-- invalid/imported bid history protection
-- API route persistence behavior
-- append-only audit log protection
-- scheduled auction close transitions
-- API rate-limit and body-size guard decisions
+<details>
+<summary><strong>Run the complete suite with disposable PostgreSQL and Redis</strong></summary>
 
-Current frontend coverage includes:
-
-- demo account buttons fill email and password for quick prototype review
-- rejected bid submissions preserve typed values
-- successful bid submissions reset the quote form
-- RFQ listing pagination controls
-- quote money formatting keeps decimal precision visible
-
-## Deployment
-
-### Backend on Railway
-
-1. Create a Railway project.
-2. Add a PostgreSQL service.
-3. Add a Redis service.
-4. Deploy the `backend/` service from GitHub or with the Railway CLI using `backend/` as the service root.
-5. Set environment variables:
-
-```text
-DATABASE_URL=<Railway PostgreSQL DATABASE_URL>
-CORS_ORIGINS=<Vercel frontend URL>
-SECRET_KEY=<long random secret>
-APP_ENV=production
-SEED_DEMO_USERS=false
-API_RATE_LIMIT_PER_MINUTE=300
-AUTH_RATE_LIMIT_PER_MINUTE=20
-API_MAX_BODY_BYTES=1048576
-CELERY_BROKER_URL=<Redis URL>
-CELERY_RESULT_BACKEND=<Redis URL>
-AUCTION_CLOSE_SCAN_INTERVAL_SECONDS=60
-RUN_CELERY_IN_WEB=true
-RATE_LIMIT_REDIS_URL=<Redis URL, or defaults to CELERY_BROKER_URL in production>
-TRUSTED_PROXY_CIDRS=
-```
-
-Railway commonly provides `postgres://...`; the app automatically normalizes it to the psycopg SQLAlchemy URL.
-
-For a free-plan demo, keep `RUN_CELERY_IN_WEB=true`. This starts a lightweight Celery worker and Celery Beat inside the backend container:
+Use a **fresh disposable database** named `rfq_test`. The PostgreSQL fixture exercises a legacy-schema upgrade; never point it at the application database or retained hosted data.
 
 ```bash
-celery -A app.celery_app:celery_app worker -B -l info --pool=solo --concurrency=1
+docker run --rm -d --name rfq-tests-postgres -e POSTGRES_DB=rfq_test -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=test-only -p 127.0.0.1:15432:5432 postgres:17-alpine
+docker run --rm -d --name rfq-tests-redis -p 127.0.0.1:16379:6379 redis:7-alpine
+docker exec rfq-tests-postgres pg_isready -U postgres -d rfq_test
+docker exec rfq-tests-redis redis-cli ping
 ```
 
-For production, set `RUN_CELERY_IN_WEB=false` and run Celery Worker and Celery Beat as separate Railway services using the same backend image:
+Run the tests once PostgreSQL accepts connections and Redis responds `PONG`.
+
+**macOS / Linux**
 
 ```bash
-celery -A app.celery_app:celery_app worker -l info
-celery -A app.celery_app:celery_app beat -l info
+export TEST_DATABASE_URL='postgresql+psycopg://postgres:test-only@127.0.0.1:15432/rfq_test'
+export TEST_REDIS_URL='redis://127.0.0.1:16379/15'
+python -m pytest backend/tests
 ```
 
-Recommended production service layout:
+**Windows PowerShell**
 
-```text
-Backend Web Service
-  command: python -m app.run
-
-Celery Worker Service
-  command: celery -A app.celery_app:celery_app worker -l info
-
-Celery Beat Service
-  command: celery -A app.celery_app:celery_app beat -l info
-
-Redis Service
-  used by: CELERY_BROKER_URL and CELERY_RESULT_BACKEND
-
-PostgreSQL Service
-  used by: DATABASE_URL
+```powershell
+$env:TEST_DATABASE_URL = 'postgresql+psycopg://postgres:test-only@127.0.0.1:15432/rfq_test'
+$env:TEST_REDIS_URL = 'redis://127.0.0.1:16379/15'
+python -m pytest backend/tests
 ```
 
-### Frontend on Vercel
+Afterward, stop the two disposable test containers:
 
-1. Import the repository in Vercel.
-2. Set root directory to `frontend`.
-3. Set environment variable:
-
-```text
-VITE_API_URL=<Railway backend URL>
-VITE_REVIEWER_PASSWORD=<public reviewer password, for the demo only>
+```bash
+docker stop rfq-tests-postgres rfq-tests-redis
 ```
 
-`VITE_*` values are included in the public browser bundle. Update the `connect-src` origin in `frontend/vercel.json` if you change the API hostname. Login fields start empty; choosing a demo account fills them without submitting.
+</details>
 
-4. Deploy.
+[GitHub Actions](.github/workflows/ci.yml) installs hash-locked Python dependencies, checks SQLite migrations, runs the complete backend suite with PostgreSQL 17/Redis 7, audits dependencies, builds the backend Docker image, and runs the locked frontend install, tests and build. It **does not deploy** the application.
 
-## Architecture Notes
+## Security and access control
 
-The important auction rules live in `backend/app/services/auction.py` as pure Python logic. This keeps business rules testable and prevents users from bypassing validation through the browser.
+- **Authentication:** salted PBKDF2-HMAC-SHA256 hashes with 600,000 iterations; legacy hash verification and upgrade on successful login. HMAC-signed bearer tokens expire after 60 minutes by default.
+- **Session lifecycle:** logout revokes the specific token. Operator password resets/deactivation increment the user's token version, invalidating earlier sessions.
+- **Authorization:** the server checks buyer ownership and supplier invitations. Competitor totals/ranks remain visible to suppliers; identities and charge breakdowns are masked.
+- **Request protection:** shared Redis limits, account-based login throttling, explicit proxy trust, bounded body buffering and database timeouts. Allowed cross-origin clients can read control errors.
+- **Audit integrity:** hash chains, unique sequences and database guards against updates/deletes; PostgreSQL also guards truncation. Database administrators can disable these controls, so this is not an externally immutable archive.
+- **Configuration:** production mode rejects unsafe signing keys and non-HTTPS CORS origins. Response headers and the retained Vercel configuration add browser protections.
+- **Dependencies:** separate hash-locked runtime and development requirements; frontend lockfile and CI audits.
 
-The FastAPI route layer handles HTTP concerns, authentication, authorization, database persistence, duplicate RFQ checks, row-level locking for bid writes, pagination, and response shaping. Ranking and visibility use supplier user IDs; identical company display names remain independent. Current quotes are selected in SQL, while bid/activity history is paginated. SQLAlchemy models use unique constraints for RFQ references and invitations, fixed-precision money columns, and relationship cascades for bids/logs.
+Browser tokens currently live in localStorage and are readable by JavaScript. The demo uses a custom signed-token format, not an OAuth/OIDC identity provider. Public demo credentials must not be used for real business data.
 
-Operational safeguards include Alembic migrations at container startup, API rate/body limits, append-only audit logs with tamper-evident hashes, and Celery Beat-driven close transition jobs.
+## API overview
 
-The React app is intentionally API-driven. It does not calculate final auction state locally; it displays the state returned by the backend.
+Interactive request/response schemas are available at [`/docs`](http://localhost:8000/docs) while the API runs locally.
 
-## Current Demo Verification
+| Method | Endpoint | Access / purpose |
+| --- | --- | --- |
+| POST | `/api/auth/login` | Validate credentials and issue a token. |
+| POST | `/api/auth/logout` | Revoke the current authenticated token. |
+| GET | `/api/auth/me` | Current authenticated user. |
+| GET | `/api/auth/suppliers` | Buyer: list active suppliers for invitations. |
+| GET | `/api/rfqs` | Authenticated: scoped list with `limit` and `offset`. |
+| POST | `/api/rfqs` | Buyer: create RFQ and invitations. |
+| GET | `/api/rfqs/{id}` | Authorized user: detail, rankings and paginated history. |
+| POST | `/api/rfqs/{id}/bids` | Invited supplier: submit a quote. |
+| GET | `/health` | Process liveness. |
+| GET | `/ready` | Database readiness. |
+| GET | `/api/operations/jobs` | Buyer: close-job freshness; 503 if stale or missing. |
 
-The deployed demo has been verified with:
+Listings and histories default to 25 rows and allow up to 100. Details accept `history_limit`, `bids_offset` and `activity_offset`.
 
-- backend health check returning `{"status":"ok"}`
-- Railway backend deployment status `SUCCESS`
-- Railway Redis deployment status `SUCCESS`
-- Celery worker connected to Redis
-- Celery Beat sending the scheduled `app.tasks.close_expired_auctions` task
-- scheduled auction close task completing successfully
-- backend test suite passing locally with PostgreSQL and Redis integration tests enabled
-- frontend test suite passing locally including App-level race and polling regressions
-- frontend production build passing locally
+## Configuration and operator commands
 
-## Security Notes
+Compose contains development settings. For custom environments, use [backend/.env.example](backend/.env.example) and [frontend/.env.example](frontend/.env.example) as references.
 
-- RFQ creation requires a buyer account.
-- Quote submission requires an invited supplier account.
-- Suppliers cannot spoof another carrier name; the backend uses the authenticated supplier company.
-- Bid submission time is assigned by the server so suppliers cannot backdate quotes into closed auctions.
-- Supplier users only see their own bid records. Competitor names and charge breakdowns are masked in rankings.
-- The API uses bearer tokens, strict CORS headers, and basic security headers.
-- The API enforces per-client request throttling and request body size limits.
-- Activity logs reject UPDATE/DELETE at both ORM and database levels (PostgreSQL also rejects TRUNCATE), with unique sequence numbers and hash chaining. Database administrators can still disable triggers; this is not an externally immutable archive.
-- Duplicate RFQ references are protected by both app-level validation and a database unique constraint.
-- Bid writes use `SELECT ... FOR UPDATE` on supported databases to serialize close-time extension decisions.
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | SQLite or PostgreSQL connection. |
+| `APP_ENV`, `SECRET_KEY`, `CORS_ORIGINS` | Environment, signing secret and explicit frontend origins. |
+| `SEED_DEMO_USERS`, `DEMO_USER_PASSWORD` | Create missing demo accounts and choose their initial password. |
+| `ACCESS_TOKEN_MINUTES` | Session lifetime; default 60. |
+| `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Redis connections for background jobs. |
+| `RATE_LIMIT_REDIS_URL`, `TRUSTED_PROXY_CIDRS` | Shared request limits and verified forwarding proxies. |
+| `API_RATE_LIMIT_PER_MINUTE`, `AUTH_RATE_LIMIT_PER_MINUTE`, `API_MAX_BODY_BYTES` | Request protection thresholds. |
+| `AUCTION_CLOSE_SCAN_INTERVAL_SECONDS` | Close scan interval; default 60 seconds. |
+| `RUN_CELERY_IN_WEB` | Optional combined supervisor mode; keep false with separate Compose workers. |
+| `VITE_API_URL` | Frontend API URL at development/build time; defaults to localhost. |
+| `VITE_REVIEWER_PASSWORD` | Intentionally public demo autofill value; never a private secret. |
 
-## Remaining Production Hardening
+Vite loads frontend environment files. The backend reads exported process variables. Changing the seed flag or demo password does **not** deactivate or reset existing accounts.
 
-For a full production rollout, I would still add:
-
-- Self-service password recovery with verified email delivery (operator provisioning/password resets are implemented)
-- Redis caching for read-heavy listing pages
-- Distributed rate limiting at the external API gateway/CDN layer
-- External dashboards/alerts and tested backups (readiness and worker-heartbeat endpoints are implemented)
-
-
-## Reliability and Security Update (11 November 2026)
-
-See the [release verification and resolved failure cases](docs/hardening-release-2026-11-11.md).
-
-- Supplier identity uses account IDs throughout rankings, rebid rules and visibility.
-- Logout cancels pending browser work and revokes that particular server token.
-- Existing 120,000-round password hashes upgrade to versioned 600,000-round PBKDF2 hashes on successful login.
-- RFQ-specific bid drafts, duplicate-submit guards, readable validation messages and session recovery.
-- Buyer all-bids table and supplier own-history table, ordered by price with pagination.
-- Visible pages refresh every 15 seconds; hidden pages skip polling and logout cancels it.
-- Delayed jobs preserve the original effective closure reason and record processing time separately.
-- Shared Redis rate limits have TTLs and fail closed with HTTP 503 if Redis is unavailable.
-- Forwarded IP headers are ignored by default. Configure only verified proxy CIDRs, never a wildcard; Uvicorn proxy parsing is disabled. With no trusted proxy configured, clients behind a proxy share the peer-IP budget, plus per-account login limits.
-- Early body buffering is bounded to 1 MiB by default and 15 seconds, including streamed requests.
-- Vercel serves CSP, framing, MIME-sniffing, referrer and permissions headers.
-- Runtime dependency versions and hashes are locked separately from development/test tools.
-
-### Operator commands
-
-Run from `backend/` with the intended database configured. Passwords are entered through hidden prompts rather than command arguments:
+Run account commands from `backend/` with the intended database configured. Password entry uses a hidden prompt:
 
 ```bash
 python -m app.manage_users create --email person@example.com --name "Person" --company "Carrier" --role supplier
@@ -373,37 +353,43 @@ python -m app.manage_users deactivate --email person@example.com
 python -m app.manage_users deactivate-demo
 ```
 
-Password changes and deactivation invalidate previously issued tokens for that user. Self-service email recovery is a separate future feature.
+## Repository layout
 
-### Health and operations
-
-- `GET /health`: process liveness.
-- `GET /ready`: database readiness; Railway's deployment health check.
-- `GET /api/operations/jobs`: authenticated buyer-only worker freshness; returns 503 when the last successful close scan is missing or stale.
-- Each scheduled scan handles up to 50 batches of 100 auctions; remaining backlog is picked up by the next scan.
-- Redis/worker failure does not permit late bids: the API still checks the deadline transactionally.
-- Migrations run before supervised services and serialize using a PostgreSQL advisory lock.
-- Migration `20261111_0003` backfills old audit hashes before enforcing non-null hashes/sequences and database triggers. This establishes integrity from migration time, not proof of historical authenticity.
-- PostgreSQL connections check stale pooled connections and bound connect, query and lock waits.
-- Preserve exactly one Beat scheduler. Use separate supervised web/worker/beat services when the hosting plan supports them.
-
-### Integration tests and dependency locks
-
-```bash
-# Use disposable services; never point test variables at the production database.
-TEST_DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/rfq_test TEST_REDIS_URL=redis://localhost:6379/15 python -m pytest backend/tests
-cd frontend
-pnpm run test
-pnpm run build
+```text
+backend/
+  app/
+    api/                 Auth and RFQ HTTP routes
+    core/                Environment settings
+    services/            Auction rules, bounded queries, audit and closure
+    models.py            Database models and constraints
+    schemas.py           Request/response models
+    middleware.py        Request size, rate and proxy controls
+    security.py          Passwords, tokens and identity checks
+    tasks.py             Close scans and job heartbeat
+    manage_users.py      Operator account management
+    migrate.py           Serialized migration startup
+    run.py               Optional web/worker supervisor
+  migrations/            Alembic schema revisions
+  tests/                 Unit, HTTP and infrastructure integration tests
+frontend/
+  src/
+    components/          Login, listing, RFQ forms, rankings and history
+    App.jsx              Session lifecycle and request coordination
+    api.js               API client, timeouts and error handling
+docs/                    HLD, diagrams, schema and engineering records
+.github/workflows/ci.yml Verification pipeline; no automatic deployment
+docker-compose.yml       Local PostgreSQL, Redis, API, worker and Beat
 ```
 
-Without test service URLs, PostgreSQL/Redis integration cases are explicitly skipped. GitHub Actions provides both services and checks legacy migrations, metadata consistency, concurrency, HTTP controls, dependency audits, backend Docker build and frontend tests/build.
+## Tradeoffs and next steps
 
-Regenerate locks with Python 3.12 and uv:
+This is a recruitment/portfolio implementation with explicit boundaries:
 
-```bash
-uv pip compile backend/requirements.in --universal --generate-hashes -o backend/requirements.txt
-uv pip compile backend/requirements-dev.in -c backend/requirements.txt --universal --generate-hashes -o backend/requirements-dev.txt
-```
+- Each supplier account is one bidding identity; multi-user supplier organizations are not modeled.
+- UI freshness uses polling, not WebSockets. Redis is a broker and rate-limit store, not a listing cache.
+- Scheduled close scans are bounded to 5,000 closures per run; a larger backlog carries over.
+- Exactly one Beat scheduler should run. The former hosted demo combined web/worker/Beat because of plan limits; Compose separates them.
+- Self-service email recovery, external immutable audit checkpoints, backup/restore drills, alert delivery and sustained load benchmarks remain future work.
+- Dependencies and security controls require ongoing maintenance; passing tests are not a production certification.
 
-Current limitations: public demo accounts share demo data; browser bearer tokens remain accessible to JavaScript; database administrators can disable audit triggers; external immutable audit storage, email recovery, backup automation and paging/alerts are not provided by this demo.
+The repository retains Docker and hosting configuration for reference. A future deployment needs new environment configuration, matching frontend API/CSP and backend CORS settings, and a deliberate restart of the cloud services. See the [hosting retirement record](docs/deployment-status.md).

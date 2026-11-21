@@ -1,5 +1,7 @@
 # High-Level Design: British Auction RFQ System
 
+**Status (21 November 2026):** The hosted demo is retired. This design describes the application runnable locally from the [README](../README.md); see [deployment status](deployment-status.md) for the cloud shutdown record.
+
 ## Objective
 
 Build a full-stack RFQ system where a buyer can create British Auction-enabled RFQs and invited suppliers can submit competing freight quotes. The system ranks quotes, extends bid close time based on configured triggers, and prevents bids after close or forced close.
@@ -40,10 +42,10 @@ The implementation covers:
 | Audit Service | Appends tamper-evident activity log entries with sequence numbers and hashes |
 | Celery Worker + Beat | Periodically closes expired auctions and writes close audit events |
 | PostgreSQL Database | Stores users, auctions, invitations, bids, and activity logs |
-| Redis | Celery broker/result backend for scheduled jobs |
+| Redis | Celery broker/result backend and shared request rate counters |
 | GitHub Actions | Runs migration check, backend tests, and frontend production build |
-| Railway | Hosts FastAPI backend and PostgreSQL |
-| Vercel | Hosts React frontend |
+| Railway | Former backend, database and broker hosting; now stopped |
+| Vercel | Former frontend hosting; now paused |
 
 ## Key Backend Flows
 
@@ -101,12 +103,14 @@ The implementation covers:
 - Client cannot submit bid timestamp.
 - Supplier users see masked competitor bid breakdowns.
 - SQLAlchemy ORM is used for database queries.
-- CORS is restricted to the deployed frontend origin.
+- CORS is restricted to explicitly configured frontend origins.
 - Security headers are set by the backend.
 - API middleware enforces per-client request throttling and body size limits.
-- Activity logs are append-only at the ORM layer and chained with SHA-256 hashes.
+- Activity logs have ORM and database mutation guards, unique sequences and SHA-256 hash chains; database administrators can disable enforcement.
 
-## Deployment
+## Former Hosting Topology
+
+All hosted compute is offline. The following is historical context; the local Compose topology uses separate API, worker and Beat services.
 
 | Layer | Platform |
 | --- | --- |
@@ -116,13 +120,13 @@ The implementation covers:
 | Worker/Beat | Supervised inside the single Railway demo backend container; separate services recommended for production |
 | Broker | Redis |
 
-Live frontend:
+Former frontend (paused):
 
 ```text
 https://frontend-one-jade-ojg8dffinq.vercel.app
 ```
 
-Live backend:
+Former backend (stopped):
 
 ```text
 https://british-auction-rfq-system-production.up.railway.app
@@ -165,4 +169,4 @@ Versioned password hashes support legacy verification and rehashing at login. Pr
 
 Audit history has database mutation triggers, unique sequences and non-null hashes. Legacy logs are backfilled at migration time. This does not protect against a database administrator disabling the triggers or rewriting the entire chain.
 
-Railway checks `/ready`; `/api/operations/jobs` reports close-job freshness to buyers. The demo supervisor restarts the container when a service exits. CI uses disposable PostgreSQL/Redis and checks schema drift, legacy upgrades, concurrent bids, HTTP regressions, UI races, audits and builds.
+`/ready` checks database readiness; `/api/operations/jobs` reports close-job freshness to buyers. The optional supervisor exits when a child service fails so a container restart policy can recover it. CI uses disposable PostgreSQL/Redis and checks schema drift, legacy upgrades, concurrent bids, HTTP regressions, UI races, audits and builds; it does not deploy.
